@@ -43,8 +43,10 @@ def get_terrain_type(lat: float, lon: float) -> int | None:
     :return: Terrain class, or None if outside the map or no data
     :rtype: int | None
     """
-    if not (-90 <= lat <= 90 and -180 <= lon <= 360):
-        raise ValueError("[terrain.py] Invalid lunar latitude or longitude!")
+    if not -90 <= lat <= 90:
+        raise ValueError("[terrain.py] Lunar latitude must be between -90 and 90 degrees!")
+    if not -180 <= lon <= 360:
+        raise ValueError("[terrain.py] Lunar longitude must be between -180 and 360 degrees!")
     if lat > -80:
         return None
 

@@ -7,7 +7,7 @@ router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
 
 @router.get("/fetch-data", response_model=FetchDataResponse)
-def fetch_data(lat: float = Query(ge=-90, le=90), long: float = Query(ge=-180, le=360), time: str | None = Query(None, description="Used by time-depend. site data")) -> FetchDataResponse:
+def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in degrees. The LOLA map covers 80°S to 90°S.",), long: float = Query(ge=-180, le=360, description=("Lunar longitude in degrees. Accepts -180° to 180° or 0° to 360°. Positive values are eastward!"),), time: str | None = Query(None, description="Reserved for time-dependent site data.")) -> FetchDataResponse:
     """
     Function to fetch the site data at a lunar coordinate
     :param lat: Latitude in degrees (-90 to 90)
