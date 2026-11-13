@@ -1,7 +1,9 @@
 from pathlib import Path
 from fastapi import FastAPI
+from app.routes import router
 
 app = FastAPI(title="Fullstack App")
+app.include_router(router)
 
 
 @app.get("/api/health")
