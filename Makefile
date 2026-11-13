@@ -2,8 +2,8 @@
 
 # Run FastAPI (port 8000) and Vite (port 5173) concurrently
 dev:
-	trap 'kill 0' SIGINT; \
-	(cd backend && uv run fastapi dev app/main.py) & \
+	@trap 'kill 0' EXIT INT TERM; \
+	(cd backend && uv run fastapi dev app/main.py --host 127.0.0.1 --port 8000) & \
 	(cd frontend && npm run dev) & \
 	wait
 
