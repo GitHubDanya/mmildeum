@@ -1,0 +1,137 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.1 Chrome/142.0.7444.265 Electron/39.8.0 Safari/537.36" version="29.6.1">
+  <diagram name="Page-1" id="omvWxRH47rS48-O67H-I">
+    <mxGraphModel dx="501" dy="1087" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-16" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="vogVN5DNlQdXhMUgdDgc-7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-17" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-18" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-19" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-20" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-21" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-6" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="/api/fetch-data?lat=...&amp;amp;long=...&amp;amp;time=..." vertex="1">
+          <mxGeometry height="40" width="240" x="305" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-52" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-13">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="75" y="220" />
+              <mxPoint x="425" y="220" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-7" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Get Sunlight Angle" vertex="1">
+          <mxGeometry height="40" width="120" x="15" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-8" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Get Average Duration Of Sunlight" vertex="1">
+          <mxGeometry height="40" width="120" x="155" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-9" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Get Earth Visibility Window" vertex="1">
+          <mxGeometry height="40" width="120" x="295" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-10" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Get Ground Angle" vertex="1">
+          <mxGeometry height="40" width="120" x="435" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-11" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="&lt;div&gt;Get Terrain Type&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="120" x="575" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-51" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-13">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="775" y="220" />
+              <mxPoint x="425" y="220" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-12" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="&lt;div&gt;Get Terrain Elevation&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="120" x="715" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-50" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-49">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-13" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="get_score()" vertex="1">
+          <mxGeometry height="40" width="120" x="365" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-25" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="vogVN5DNlQdXhMUgdDgc-24" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-27" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-26">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-23" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="User Picks Coordinate" vertex="1">
+          <mxGeometry height="40" width="120" x="120" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-29" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="vogVN5DNlQdXhMUgdDgc-28">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-24" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Call API" vertex="1">
+          <mxGeometry height="40" width="120" x="200" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-26" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Add coordinate to list" vertex="1">
+          <mxGeometry height="40" width="120" x="40" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-32" edge="1" parent="1" source="vogVN5DNlQdXhMUgdDgc-28" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="vogVN5DNlQdXhMUgdDgc-31" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-28" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Display Data" vertex="1">
+          <mxGeometry height="40" width="120" x="120" y="680" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-31" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Calculate Relations" vertex="1">
+          <mxGeometry height="40" width="120" x="120" y="760" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-34" parent="1" style="swimlane;startSize=0;" value="" vertex="1">
+          <mxGeometry height="250" width="320" x="410" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-37" parent="vogVN5DNlQdXhMUgdDgc-34" style="swimlane;whiteSpace=wrap;html=1;" value="Graphs" vertex="1">
+          <mxGeometry height="190" width="135" x="15" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-40" parent="vogVN5DNlQdXhMUgdDgc-37" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Sunlight for 24hrs" vertex="1">
+          <mxGeometry height="30" width="108.75" x="13.13" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-41" parent="vogVN5DNlQdXhMUgdDgc-37" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Earth Visibility for 24hrs" vertex="1">
+          <mxGeometry height="30" width="108.75" x="13.129999999999995" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-47" parent="vogVN5DNlQdXhMUgdDgc-37" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Sunlight angle for 24hrs" vertex="1">
+          <mxGeometry height="30" width="108.75" x="13.129999999999995" y="95" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-38" parent="vogVN5DNlQdXhMUgdDgc-34" style="swimlane;whiteSpace=wrap;html=1;" value="Data points" vertex="1">
+          <mxGeometry height="190" width="135" x="170" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-42" parent="vogVN5DNlQdXhMUgdDgc-38" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Terrain Type" vertex="1">
+          <mxGeometry height="30" width="108.75" x="13.129999999999995" y="35" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-43" parent="vogVN5DNlQdXhMUgdDgc-38" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Terrain Elevation" vertex="1">
+          <mxGeometry height="30" width="108.75" x="13.129999999999995" y="65" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-44" parent="vogVN5DNlQdXhMUgdDgc-38" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Ground Angle" vertex="1">
+          <mxGeometry height="30" width="108.75" x="13.129999999999995" y="95" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-45" parent="vogVN5DNlQdXhMUgdDgc-38" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Peak Sunlight" vertex="1">
+          <mxGeometry height="30" width="108.75" x="13.129999999999995" y="125" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-46" parent="vogVN5DNlQdXhMUgdDgc-38" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Peak" vertex="1">
+          <mxGeometry height="30" width="108.75" x="13.129999999999995" y="155" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-39" parent="vogVN5DNlQdXhMUgdDgc-34" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="List Item View" vertex="1">
+          <mxGeometry height="30" width="60" x="130" y="6" as="geometry" />
+        </mxCell>
+        <mxCell id="vogVN5DNlQdXhMUgdDgc-49" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Send back data + score" vertex="1">
+          <mxGeometry height="40" width="120" x="365" y="320" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
