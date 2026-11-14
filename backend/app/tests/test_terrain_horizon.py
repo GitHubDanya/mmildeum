@@ -23,19 +23,30 @@ LAT = -89.5
 LON = 0.0
 
 
-def make_dem(tmp_path: Path, *, ridge: bool = False, gap: bool = False) -> Path:
-    """Accept a temporary directory and terrain flags; return a DEM file path."""
+def make_dem(
+    tmp_path: Path,
+    *,
+    ridge: bool = False,
+    gap: bool = False,
+    lon: float = LON,
+) -> Path:
+    """Accept a directory, terrain flags and longitude; return a DEM path."""
     crs = CRS.from_user_input(MOON_CRS)
     # Enforce longitude-latitude input order regardless of CRS axis definitions.
     projection = Transformer.from_crs(crs.geodetic_crs, crs, always_xy=True)
-    x0, y0 = projection.transform(LON, LAT)
+    x0, y0 = projection.transform(lon, LAT)
 
     transform = from_origin(x0 - 1050, y0 + 1050, 100, 100)
     data = np.zeros((21, 21), dtype=np.float32)
 
     if ridge or gap:
         geod = Geod(a=1737400, b=1737400)
-        ridge_lon, ridge_lat, _ = geod.fwd(LON, LAT, 0, 300)
+        ridge_lon, ridge_lat, _ = geod.fwd(
+    lon,
+    LAT,
+    0,
+    300,
+)
 
         x, y = projection.transform(ridge_lon, ridge_lat)
         row, col = rasterio.transform.rowcol(transform, x, y)
@@ -153,3 +164,61 @@ def test_interpolation_and_azimuth_wraparound() -> None:
     assert is_body_visible(horizon, 45, 4) is False
     assert is_body_visible(horizon, 315, 4) is False
     assert is_body_visible(horizon, 315, 6) is True
+
+
+def test_incomplete_ray_retains_partial_obstruction(
+    tmp_path: Path,
+) -> None:
+    """Accept a temporary directory; verify partial horizon coverage."""
+    result = get_terrain_horizon(
+        LAT,
+        LON,
+        dem_path=make_dem(tmp_path, ridge=True),
+        azimuth_step_deg=90,
+        distance_step_m=100,
+        max_distance_m=1500,
+    )
+
+    north = result["profile"][0]
+
+    assert north["horizon_elevation_deg"] is None
+    assert north["partial_horizon_elevation_deg"] is not None
+
+    assert 0 < north["covered_distance_m"] < 1500
+
+    assert is_body_visible(result, 0, 5) is None
+
+
+def test_antimeridian_coordinates_match(
+    tmp_path: Path,
+) -> None:
+    """Accept a temporary directory; verify longitude wraparound."""
+    path = make_dem(tmp_path, lon=180.0)
+
+    settings = dict(
+        dem_path=path,
+        azimuth_step_deg=90,
+        distance_step_m=100,
+        max_distance_m=500,
+    )
+
+    east = get_terrain_horizon(
+        LAT,
+        180.0,
+        **settings,
+    )
+
+    west = get_terrain_horizon(
+        LAT,
+        -180.0,
+        **settings,
+    )
+
+    assert east["data_quality"] == "complete_within_radius"
+    assert west["data_quality"] == "complete_within_radius"
+
+    for left, right in zip(east["profile"], west["profile"]):
+        assert left["horizon_elevation_deg"] == pytest.approx(
+            right["horizon_elevation_deg"],
+            abs=1e-8,
+        )
