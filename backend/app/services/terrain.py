@@ -27,7 +27,7 @@ def _load_terrain_map():
             if raster.crs is None or not raster.crs.is_projected:
                 raise TerrainDataUnavailable("[terrain.py] Expected a projected lunar CRS!")
             map_crs = CRS.from_wkt(raster.crs.to_wkt())
-            to_map = Transformer.from_crs(map_src.geodetic_crs, map_crs, always_xy=True)
+            to_map = Transformer.from_crs(map_crs.geodetic_crs, map_crs, always_xy=True)
             return raster.read(1, masked=True), raster.transform, to_map
     except(OSError, RasterioError, ProjError) as e:
         raise TerrainDataUnavailable("[terrain.py] Could not load LOLA terrain map!") from e
