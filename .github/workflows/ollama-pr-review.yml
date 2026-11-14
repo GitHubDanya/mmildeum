@@ -27,7 +27,7 @@ jobs:
         run: |
           COMMIT_ID=$(gh pr view $PR_NUMBER --json headRefOid -q .headRefOid)
           
-          export RAW_DIFF=$(gh pr diff $PR_NUMBER)
+          export RAW_DIFF=$(gh pr diff $PR_NUMBER -- ':!package-lock.json' ':!yarn.lock' ':!pnpm-lock.yaml' ':!*.lock')
           
           ANNOTATED_DIFF=$(python3 -c '
           import os, re
@@ -57,6 +57,8 @@ jobs:
 
           print("\n".join(output))
           ')
+
+          ANNOTATED_DIFF=$(echo "$ANNOTATED_DIFF" | head -c 45000)
 
           if [[ -z "$(echo "$ANNOTATED_DIFF" | tr -d '[:space:]')" ]]; then
             echo "No additions or changes detected in PR diff."
