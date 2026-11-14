@@ -14,6 +14,7 @@ class FetchDataResponse(BaseModel):
     terrain_class_id: int | None = Field(description="Published NASA LOLA south-pole roughness class ID.")
     daytime_avg_sun_angle: float | None = None
     terrain_elevation_m: float | None = None
+    visibility_windows: list | None = None
     ground_angle_deg: float | None = None
     terrain_roughness_m: float | None = Field(
         default=None,
