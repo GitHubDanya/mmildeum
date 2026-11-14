@@ -12,12 +12,25 @@ from rasterio.errors import RasterioError
 
 from app.services.terrain import ELEVATION_MAP, TerrainDataUnavailable
 
-
+# Limit raster sampling work per request to control CPU and I/O costs.
+# This is a performance safeguard, not a scientific accuracy threshold.
 MAX_SAMPLES = 250_000
 
 
-def _finite(value: float, name: str) -> float:
-    """Accept a numeric parameter and its name; return a validated float."""
+def _finite(value: object, name: str) -> float:
+    """Validate a numeric input and convert it to a finite float.
+
+    Args:
+        value: Numeric input value to validate.
+        name: Parameter name used in error messages.
+
+    Returns:
+        The validated finite floating-point number.
+
+    Raises:
+        ValueError: If the value is not numeric, is a boolean,
+            is infinite, or is NaN.
+    """
     if isinstance(value, bool):
         raise ValueError(f"{name} must be a finite number")
 
@@ -32,21 +45,37 @@ def _finite(value: float, name: str) -> float:
     return number
 
 
+
 def _sample_elevation(dataset: Any, x: float, y: float) -> float | None:
-    """Accept a raster and projected location; return elevation in meters or None."""
+    """Read terrain elevation from a projected DEM coordinate.
+
+    Args:
+        dataset: Open Rasterio dataset containing elevation data.
+        x: X coordinate in the DEM coordinate reference system.
+        y: Y coordinate in the DEM coordinate reference system.
+
+    Returns:
+        Terrain elevation in meters, or None if the coordinate
+        is outside the raster or contains invalid or missing data.
+    """
+    # Convert projected coordinates into raster row and column indices.
     row, col = dataset.index(x, y)
 
+    # Check raster bounds before accessing the pixel.
     if not (0 <= row < dataset.height and 0 <= col < dataset.width):
         return None
 
+    # Read the pixel while preserving the raster's NoData mask.
     pixel = next(dataset.sample([(x, y)], indexes=1, masked=True))[0]
 
     if np.ma.is_masked(pixel):
         return None
 
+    # Apply the raster scale and offset to obtain physical elevation.
     value = float(pixel) * dataset.scales[0] + dataset.offsets[0]
 
     return value if isfinite(value) else None
+
 
 
 def get_terrain_horizon(
@@ -84,8 +113,11 @@ def get_terrain_horizon(
     max_distance_m = _finite(max_distance_m, "max_distance_m")
     azimuth_step_deg = _finite(azimuth_step_deg, "azimuth_step_deg")
 
-    if not (-90 <= lat <= 90 and -180 <= lon <= 360):
-        raise ValueError("Lunar coordinates are out of range")
+    if not -90 <= lat <= 90:
+        raise ValueError("Latitude must be between -90 and 90 degrees")
+
+    if not -180 <= lon <= 360:
+        raise ValueError("Longitude must be between -180 and 360 degrees")
 
     if observer_height_m < 0 or max_distance_m <= 0:
         raise ValueError("Observer height must be nonnegative and radius positive")
