@@ -104,8 +104,8 @@ def _validate_weights(value: object) -> tuple[float, ...]:
     if not isclose(
         sum(weights),
         1.0,
-        rel_tol=1e-9,
-        abs_tol=1e-9,
+        rel_tol=0.0,
+        abs_tol=1e-12,
     ):
         raise ValueError("weights must sum to 1")
 
