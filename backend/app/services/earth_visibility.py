@@ -31,7 +31,8 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict[str, float] | No
             azim, angle = item[0], item[1]
         terrain_map[azim] = angle
 
-    visible_windows = []
+    all_windows = []
+    visible_windows = {}
     current_start = None
     last_timestamp = None
 
@@ -45,7 +46,7 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict[str, float] | No
             elevation = float(parts[-1])
             azimuth = float(parts[-2])
             timestamp = parts[0]
-            all_elevations.append((elevation, azimuth))
+            all_windows.append((elevation, azimuth))
         except ValueError:
             continue
 
@@ -59,14 +60,14 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict[str, float] | No
 
         # earth dipped behind terrain
         elif not is_visible and current_start is not None:
-            windows.append({
+            visible_windows.append({
                 "start": current_start,
                 "end": timestamp
             })
             current_start = None
-
+        # Last visible timestamp check
         if current_start is not None and last_timestamp is not None:
-            windows.append({
+            visible_windows.append({
                 "start": current_start,
                 "end": last_timestamp
             })
@@ -74,7 +75,7 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict[str, float] | No
     return {
         "latitude": lat,
         "longitude": lon,
-        "windows": windows
+        "windows": visible_windows
     }
 
 
