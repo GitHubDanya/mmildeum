@@ -11,6 +11,8 @@ from rasterio.transform import from_origin
 from app.services.terrain import TerrainDataUnavailable
 from app.services.terrain_horizon import get_terrain_horizon, is_body_visible
 
+# NoData sentinel, distinct from all generated synthetic terrain elevations.
+NODATA = -9999.0
 
 MOON_CRS = (
     "+proj=stere +lat_0=-90 +lon_0=0 +lat_ts=-90 "
@@ -24,6 +26,7 @@ LON = 0.0
 def make_dem(tmp_path: Path, *, ridge: bool = False, gap: bool = False) -> Path:
     """Accept a temporary directory and terrain flags; return a DEM file path."""
     crs = CRS.from_user_input(MOON_CRS)
+    # Enforce longitude-latitude input order regardless of CRS axis definitions.
     projection = Transformer.from_crs(crs.geodetic_crs, crs, always_xy=True)
     x0, y0 = projection.transform(LON, LAT)
 
@@ -37,7 +40,7 @@ def make_dem(tmp_path: Path, *, ridge: bool = False, gap: bool = False) -> Path:
         x, y = projection.transform(ridge_lon, ridge_lat)
         row, col = rasterio.transform.rowcol(transform, x, y)
 
-        data[row, col] = -9999 if gap else 250
+        data[row, col] = NODATA if gap else 250.0
 
     path = tmp_path / "synthetic_lunar_dem.tif"
 
