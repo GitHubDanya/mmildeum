@@ -54,7 +54,7 @@ def make_dem(tmp_path: Path, *, ridge: bool = False, gap: bool = False) -> Path:
         dtype="float32",
         crs=crs.to_wkt(),
         transform=transform,
-        nodata=-9999,
+        nodata=NODATA,
     ) as dataset:
         dataset.write(data, 1)
 
