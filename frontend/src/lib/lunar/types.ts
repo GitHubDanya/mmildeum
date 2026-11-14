@@ -1,3 +1,11 @@
+export interface TerrainRoughnessMetadata {
+    dataset?: string;
+    resolution_deg?: [number, number];
+    window_size_m?: number;
+    valid_sample_count?: number;
+    sample_count?: number;
+}
+
 export interface FetchDataResponse {
     terrain_type: string | null;
     terrain_class_id: number | null;
@@ -5,6 +13,8 @@ export interface FetchDataResponse {
     terrain_elevation_m: number | null;
     ground_angle_deg?: number | null;
     ground_angle?: number | null;
+    terrain_roughness_m?: number | null;
+    terrain_roughness_metadata?: TerrainRoughnessMetadata | null;
     peak_sunlight?: number | null;
     peak?: number | null;
     peak_sun_angle?: number | null;
@@ -29,6 +39,8 @@ export interface SelectedSite {
     daytimeAvgSunAngle: number | null;
     terrainElevationM: number | null;
     groundAngle: number | null;
+    terrainRoughnessM: number | null;
+    terrainRoughnessMetadata: TerrainRoughnessMetadata | null;
     peakSunlight: number | null;
     peakValue: number | null;
     sunlight24h: number[];
@@ -37,17 +49,4 @@ export interface SelectedSite {
     isEstimatedSeries: boolean;
     loadingScore: boolean;
     scoreError: boolean;
-}
-
-export interface SparkChartConfig {
-    data: number[];
-    color: string;
-    unit: string;
-    min: number;
-    max: number;
-    stepped?: boolean;
-    primaryLabel?: string;
-    compareData?: number[];
-    compareColor?: string;
-    compareLabel?: string;
 }

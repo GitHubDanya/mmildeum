@@ -75,6 +75,8 @@
             daytimeAvgSunAngle: null,
             terrainElevationM: null,
             groundAngle: null,
+            terrainRoughnessM: null,
+            terrainRoughnessMetadata: null,
             peakSunlight: null,
             peakValue: null,
             sunlight24h: fallback.sunlight24h,

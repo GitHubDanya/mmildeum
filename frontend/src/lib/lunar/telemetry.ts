@@ -19,7 +19,9 @@ export function getScoreHexColor(score: number): string {
 
 export function buildFallbackSeries(lat: number, lon: number, avgSunAngle: number | null) {
     const latFactor = Math.max(0.15, Math.cos((lat * Math.PI) / 180));
-    const basePeakAngle = avgSunAngle !== null ? Math.min(88, avgSunAngle * 1.45) : 65 * latFactor;
+    const basePeakAngle =
+        avgSunAngle !== null ? Math.min(88, avgSunAngle * 1.45) : 65 * latFactor;
+
     const phaseOffset = ((lon + 180) / 360) * Math.PI * 2;
 
     const sunlightAngle24h = Array.from({ length: 24 }, (_, h) => {
@@ -93,6 +95,13 @@ export async function fetchSiteTelemetry(
                 ? data.peak_sun_angle
                 : Math.max(...sunlightAngle24h);
 
+    const terrainRoughnessM =
+        typeof data.terrain_roughness_m === 'number' && Number.isFinite(data.terrain_roughness_m)
+            ? data.terrain_roughness_m
+            : null;
+
+    const terrainRoughnessMetadata = data.terrain_roughness_metadata ?? null;
+
     return {
         score: validScore,
         terrainType: data.terrain_type ?? null,
@@ -102,6 +111,12 @@ export async function fetchSiteTelemetry(
         terrainElevationM:
             typeof data.terrain_elevation_m === 'number' ? data.terrain_elevation_m : null,
         groundAngle,
+        terrainRoughnessM:
+            typeof data.terrain_roughness_m === 'number' &&
+            Number.isFinite(data.terrain_roughness_m)
+                ? data.terrain_roughness_m
+                : null,
+        terrainRoughnessMetadata: data.terrain_roughness_metadata ?? null,
         peakSunlight,
         peakValue,
         sunlight24h,

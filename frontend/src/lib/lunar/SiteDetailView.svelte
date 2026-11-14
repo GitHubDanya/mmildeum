@@ -149,6 +149,25 @@
                         </span>
                     </div>
 
+                    <div
+                            class="datapoint-item"
+                            title={site.terrainRoughnessMetadata
+                            ? `Dataset: ${site.terrainRoughnessMetadata.dataset ?? 'N/A'} | Window: ${site.terrainRoughnessMetadata.window_size_m ?? 'N/A'}m | Samples: ${site.terrainRoughnessMetadata.valid_sample_count ?? 0}/${site.terrainRoughnessMetadata.sample_count ?? 0}`
+                            : undefined}
+                    >
+                        <span class="dp-label">Terrain Roughness</span>
+                        <span class="dp-value">
+                            {site.terrainRoughnessM !== null
+                                ? `${site.terrainRoughnessM.toFixed(2)} m`
+                                : 'N/A'}
+                            {#if site.terrainRoughnessMetadata?.window_size_m}
+                                <small class="dp-sub">
+                                    ({site.terrainRoughnessMetadata.window_size_m}m window)
+                                </small>
+                            {/if}
+                        </span>
+                    </div>
+
                     <div class="datapoint-item">
                         <span class="dp-label">Peak Sunlight</span>
                         <span class="dp-value">
@@ -315,6 +334,13 @@
         font-weight: 500;
         color: #fff;
         word-break: break-word;
+    }
+
+    .dp-sub {
+        font-size: 0.72rem;
+        font-weight: 400;
+        opacity: 0.6;
+        margin-left: 0.25rem;
     }
 
     .detail-status {

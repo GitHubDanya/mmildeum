@@ -48,6 +48,7 @@
 
     $: scoreWinner = compareWinner(siteA.score, siteB.score, true);
     $: slopeWinner = compareWinner(siteA.groundAngle, siteB.groundAngle, false);
+    $: roughnessWinner = compareWinner(siteA.terrainRoughnessM, siteB.terrainRoughnessM, false);
     $: sunlightWinner = compareWinner(siteA.peakSunlight, siteB.peakSunlight, true);
     $: peakWinner = compareWinner(siteA.peakValue, siteB.peakValue, true);
     $: avgSunWinner = compareWinner(siteA.daytimeAvgSunAngle, siteB.daytimeAvgSunAngle, true);
@@ -254,6 +255,20 @@
                     </span>
                     <span class="m-val" class:winner={slopeWinner === 'B'}>
                         {siteB.groundAngle !== null ? `${siteB.groundAngle.toFixed(2)}°` : 'N/A'}
+                    </span>
+                </div>
+
+                <div class="metric-row">
+                    <span class="m-label">Roughness</span>
+                    <span class="m-val" class:winner={roughnessWinner === 'A'}>
+                        {siteA.terrainRoughnessM !== null
+                            ? `${siteA.terrainRoughnessM.toFixed(2)} m`
+                            : 'N/A'}
+                    </span>
+                    <span class="m-val" class:winner={roughnessWinner === 'B'}>
+                        {siteB.terrainRoughnessM !== null
+                            ? `${siteB.terrainRoughnessM.toFixed(2)} m`
+                            : 'N/A'}
                     </span>
                 </div>
 
