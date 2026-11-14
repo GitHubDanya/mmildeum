@@ -23,9 +23,9 @@ def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in 
     """
     try:
         class_id = get_terrain_type(lat, long)
-        daytime_avg_sun_angle = get_average_sun_angle(lat, long)["avg_daytime_sun_angle"]
+        sun_data = get_average_sun_angle(lat, long)["avg_daytime_sun_angle"]
         elevation_m = get_terrain_elevation(lat, long)
     except TerrainDataUnavailable as e:
         logger.exception("[routes.py] Terrain lookup failed!")
         raise HTTPException(status_code=503, detail="Lunar terrain data is unavailable!") from e
-    return FetchDataResponse(terrain_type=None if class_id is None else f"LOLA roughness class {class_id}", terrain_class_id=class_id, daytime_avg_sun_angle=daytime_avg_sun_angle, terrain_elevation_m=elevation_m)
+    return FetchDataResponse(terrain_type=None if class_id is None else f"LOLA roughness class {class_id}", terrain_class_id=class_id, daytime_avg_sun_angle=sun_data["avg_daytime_sun_angle"] if sun_data else None, terrain_elevation_m=elevation_m)

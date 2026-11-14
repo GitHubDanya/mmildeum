@@ -3,7 +3,7 @@ import re
 
 HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons.api"
 
-def get_average_sun_angle(lat: float, lon: float):
+def get_average_sun_angle(lat: float, lon: float) -> dict[str, float] | None:
     """
     Function to get the Average sun angle at a lunar coordinate
     :param lat: Latitude in degrees (-90 to 90)
