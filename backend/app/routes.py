@@ -8,12 +8,30 @@ from .services.terrain import (
     get_lola_roughness_deg,
     get_terrain_elevation,
 )
+from .services.earth_visibility import get_earth_visibility_window
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
 
+
 @router.get("/fetch-data", response_model=FetchDataResponse)
-def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in degrees. Elevation and slope have global coverage when the global DEM is available.",), long: float = Query(ge=-180, le=360, description=("Lunar longitude in degrees. Accepts -180° to 180° or 0° to 360°. Positive values are eastward!"),), time: str | None = Query(None, description="Reserved for time-dependent site data.")) -> FetchDataResponse:
+def fetch_data(
+    lat: float = Query(
+        ge=-90,
+        le=90,
+        description="Lunar latitude in degrees. Elevation and slope have global coverage when the global DEM is available.",
+    ),
+    long: float = Query(
+        ge=-180,
+        le=360,
+        description=(
+            "Lunar longitude in degrees. Accepts -180° to 180° or 0° to 360°. Positive values are eastward!"
+        ),
+    ),
+    time: str | None = Query(
+        None, description="Reserved for time-dependent site data."
+    ),
+) -> FetchDataResponse:
     """
     Function to fetch the site data at a lunar coordinate
     :param lat: Latitude in degrees (-90 to 90)
@@ -30,12 +48,16 @@ def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in 
         sun_data = get_average_sun_angle(lat, long)
         elevation_m = get_terrain_elevation(lat, long)
         ground_angle_deg = get_ground_angle(lat, long)
+        visibility_wins = get_earth_visibility_window(lat, long)
     except TerrainDataUnavailable as e:
         logger.exception("[routes.py] Terrain lookup failed!")
-        raise HTTPException(status_code=503, detail="Lunar terrain data is unavailable!") from e
+        raise HTTPException(
+            status_code=503, detail="Lunar terrain data is unavailable!"
+        ) from e
     return FetchDataResponse(
         daytime_avg_sun_angle=sun_data["avg_daytime_sun_angle"] if sun_data else None,
         terrain_elevation_m=elevation_m,
+        visibility_windows=visibility_wins["windows"] if visibility_wins else None,
         ground_angle_deg=ground_angle_deg,
         lola_roughness_deg=lola_roughness_deg,
     )
