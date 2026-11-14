@@ -25,22 +25,34 @@ jobs:
           REPO: ${{ github.repository }}
           MODEL_NAME: qwen2.5-coder:14b-instruct-q6_K
         run: |
-          COMMIT_ID=$(gh pr view $PR_NUMBER --json headRefOid -q .headRefOid)
-          
-          export RAW_DIFF=$(gh pr diff $PR_NUMBER -- ':!package-lock.json' ':!yarn.lock' ':!pnpm-lock.yaml' ':!*.lock')
-          
+          COMMIT_ID=$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid)
+
+          RAW_DIFF=$(gh pr diff "$PR_NUMBER")
+          export RAW_DIFF
+
           ANNOTATED_DIFF=$(python3 -c '
           import os, re
 
           diff = os.environ.get("RAW_DIFF", "")
+          skip_files = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml")
           current_file = None
+          skip_current = False
           new_line_num = 0
           output = []
 
           for line in diff.splitlines():
-              if line.startswith("+++ b/"):
+              if line.startswith("diff --git "):
+                  current_file = None
+                  skip_current = False
+              elif line.startswith("+++ b/"):
                   current_file = line[6:]
-                  output.append(f"\n--- File: {current_file} ---")
+                  if current_file.endswith(".lock") or os.path.basename(current_file) in skip_files:
+                      skip_current = True
+                  else:
+                      skip_current = False
+                      output.append(f"\n--- File: {current_file} ---")
+              elif skip_current:
+                  continue
               elif line.startswith("@@"):
                   match = re.search(r"\+(\d+)", line)
                   if match:
@@ -55,14 +67,12 @@ jobs:
                       new_line_num += 1
                       output.append(f"Line {new_line_num} (context): {line}")
 
-          print("\n".join(output))
+          print("\n".join(output)[:45000])
           ')
-
-          ANNOTATED_DIFF=$(echo "$ANNOTATED_DIFF" | head -c 45000)
 
           if [[ -z "$(echo "$ANNOTATED_DIFF" | tr -d '[:space:]')" ]]; then
             echo "No additions or changes detected in PR diff."
-            gh pr comment $PR_NUMBER --body "**Ollama Code Review**: No added or modified lines found in this PR to review."
+            gh pr comment "$PR_NUMBER" --body "**Ollama Code Review**: No added or modified lines found in this PR to review."
             exit 0
           fi
 
@@ -101,13 +111,13 @@ jobs:
               stream: false,
               options: {
                 temperature: 0.2,
-                repeat_penalty: 1.15
+                repeat_penalty: 1.15,
                 num_ctx: 16384,
                 num_predict: 2048
               }
             }')
 
-          RESPONSE=$(curl -s --max-time 300 http://localhost:11434/api/generate \
+          RESPONSE=$(curl -sS --max-time 300 http://localhost:11434/api/generate \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
 
@@ -147,7 +157,7 @@ jobs:
           $(echo "$CLEAN_JSON" | jq -r '.comments[]? | "#### `\(.path)` (Line \(.line))\n\(.body)\n"')
           EOF
           )
-            gh pr comment $PR_NUMBER --body "$FALLBACK_BODY"
+            gh pr comment "$PR_NUMBER" --body "$FALLBACK_BODY"
           else
             echo "Inline review posted successfully."
           fi
