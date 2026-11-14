@@ -1,18 +1,29 @@
 <script lang="ts">
     import '#lib/lunar/shared.css';
     import type { SelectedSite } from '#lib/lunar/types';
-    import { buildFallbackSeries, fetchSiteTelemetry } from '#lib/lunar/telemetry';
+    import {
+        HOURS_LABELS,
+        buildFallbackSeries,
+        fetchSiteTelemetry,
+        findRecommendedLandingWindows,
+        getTimelineBounds
+    } from '#lib/lunar/telemetry';
     import LunarGlobe from '#lib/lunar/LunarGlobe.svelte';
     import SitesListView from '#lib/lunar/SitesListView.svelte';
     import SiteDetailView from '#lib/lunar/SiteDetailView.svelte';
     import SiteCompareView from '#lib/lunar/SiteCompareView.svelte';
+    import MissionTimelineSlider from '#lib/lunar/MissionTimelineSlider.svelte';
 
     let globe: LunarGlobe;
+    let isViewingEarth = false;
     let selectedSites: SelectedSite[] = [];
     let activeSiteId: number | null = null;
     let comparePairIds: [number, number] | null = null;
     let nextSiteId = 1;
     let viewportWidth = 1440;
+
+    let selectedTimeMs = Date.UTC(2026, 9, 1, 0, 0);
+    let hasUserScrubbedTime = false;
 
     $: activeSite = selectedSites.find((s) => s.id === activeSiteId) ?? null;
 
@@ -22,6 +33,17 @@
         const b = selectedSites.find((s) => s.id === comparePairIds![1]);
         return a && b ? ([a, b] as [SelectedSite, SelectedSite]) : null;
     })();
+
+    $: timelineTargetSites = compareSites
+        ? [compareSites[0], compareSites[1]]
+        : activeSite
+            ? [activeSite]
+            : selectedSites;
+
+    $: timelineBounds = getTimelineBounds(selectedSites);
+    $: if (selectedTimeMs < timelineBounds.startMs || selectedTimeMs > timelineBounds.endMs) {
+        selectedTimeMs = timelineBounds.startMs;
+    }
 
     $: isExpanded = Boolean(activeSite || compareSites);
 
@@ -48,6 +70,22 @@
                     ? { ...s, ...updates, loadingScore: false, scoreError: false }
                     : s
             );
+
+            // Auto-position the timeline on the first recommended landing window if user hasn't scrubbed yet
+            if (!hasUserScrubbedTime) {
+                const updatedSite = selectedSites.find((s) => s.id === site.id);
+                if (updatedSite) {
+                    const bounds = getTimelineBounds(selectedSites);
+                    const best = findRecommendedLandingWindows(
+                        [updatedSite],
+                        bounds.startMs,
+                        bounds.endMs
+                    );
+                    if (best.length > 0) {
+                        selectedTimeMs = best[0].peakMs;
+                    }
+                }
+            }
         } catch (error) {
             console.error(`Failed to fetch data for site #${site.id}:`, error);
             selectedSites = selectedSites.map((s) =>
@@ -75,14 +113,17 @@
             daytimeAvgSunAngle: null,
             terrainElevationM: null,
             groundAngle: null,
-            terrainRoughnessM: null,
-            terrainRoughnessMetadata: null,
+            lolaRoughnessDeg: null,
+            visibilityWindows: [],
+            visibilityCoveragePct: null,
+            visibilitySeries: fallback.earthVisibility24h,
+            visibilityLabels: HOURS_LABELS,
+            hasRealVisibility: false,
             peakSunlight: null,
             peakValue: null,
             sunlight24h: fallback.sunlight24h,
-            earthVisibility24h: fallback.earthVisibility24h,
             sunlightAngle24h: fallback.sunlightAngle24h,
-            isEstimatedSeries: true,
+            isEstimatedSunSeries: true,
             loadingScore: true,
             scoreError: false
         };
@@ -101,7 +142,6 @@
         const found = selectedSites.find((s) => s.id === siteId);
         if (!found) return;
 
-        // If already comparing these two sites, clicking a pin flies to it without closing compare view
         if (comparePairIds && comparePairIds.includes(siteId)) {
             globe?.flyToSite(found);
             return;
@@ -134,7 +174,13 @@
         selectedSites = [];
         activeSiteId = null;
         comparePairIds = null;
+        hasUserScrubbedTime = false;
         nextSiteId = 1;
+    }
+
+    function handleTimelineChange(nextMs: number) {
+        hasUserScrubbedTime = true;
+        selectedTimeMs = nextMs;
     }
 </script>
 
@@ -142,9 +188,11 @@
 
 <LunarGlobe
         bind:this={globe}
+        bind:isViewingEarth
         sites={selectedSites}
         {highlightedSiteIds}
         {rightInsetPx}
+        {selectedTimeMs}
         onAddSite={handleAddSite}
         onSelectSite={handleSelectSiteById}
 />
@@ -157,6 +205,8 @@
                 siteA={compareSites[0]}
                 siteB={compareSites[1]}
                 allSites={selectedSites}
+                {selectedTimeMs}
+                timelineStartMs={timelineBounds.startMs}
                 onChangePair={(pair) => (comparePairIds = pair)}
                 onBack={() => (comparePairIds = null)}
                 onFocus={(site) => globe?.flyToSite(site)}
@@ -166,6 +216,8 @@
         <SiteDetailView
                 site={activeSite}
                 totalSitesCount={selectedSites.length}
+                {selectedTimeMs}
+                timelineStartMs={timelineBounds.startMs}
                 onBack={() => (activeSiteId = null)}
                 onFocus={(site) => globe?.flyToSite(site)}
                 onCompareWith={handleCompareFromDetail}
@@ -187,7 +239,25 @@
 
 <div class="top-bar">
     <button class="btn btn-white">Our Scoring Algorithm</button>
+    {#if isViewingEarth}
+        <button class="btn btn-moon" on:click={() => globe?.flyToMoon()}>
+            ← Back to Moon
+        </button>
+    {:else}
+        <button class="btn btn-earth" on:click={() => globe?.flyToEarth()}>
+            View Earth
+        </button>
+    {/if}
 </div>
+
+<MissionTimelineSlider
+        startMs={timelineBounds.startMs}
+        endMs={timelineBounds.endMs}
+        {selectedTimeMs}
+        targetSites={timelineTargetSites}
+        {rightInsetPx}
+        onChangeTime={handleTimelineChange}
+/>
 
 <style>
     @font-face {
@@ -246,6 +316,27 @@
         left: 20px;
         display: flex;
         flex-direction: row;
+        gap: 0.5rem;
         z-index: 10;
+    }
+
+    .btn-earth {
+        background-color: rgba(37, 99, 235, 0.25);
+        color: #93c5fd;
+        border: 1px solid rgba(96, 165, 250, 0.45);
+    }
+
+    .btn-earth:hover {
+        background-color: rgba(37, 99, 235, 0.4);
+    }
+
+    .btn-moon {
+        background-color: rgba(234, 234, 234, 0.18);
+        color: #ffffff;
+        border: 1px solid rgba(234, 234, 234, 0.45);
+    }
+
+    .btn-moon:hover {
+        background-color: rgba(234, 234, 234, 0.3);
     }
 </style>
