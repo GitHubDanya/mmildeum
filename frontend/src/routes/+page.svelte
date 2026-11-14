@@ -129,6 +129,11 @@
         };
 
         selectedSites = [...selectedSites, newSite];
+
+        if (activeSiteId !== null) {
+            activeSiteId = id;
+        }
+
         loadTelemetry(newSite);
     }
 
