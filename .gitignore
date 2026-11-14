@@ -12,3 +12,6 @@ frontend/.svelte-kit/
 # Env
 .env
 EOF
+
+# GeoTIFF
+/backend/data/LDEM_80S_80MPP_ADJ.TIF

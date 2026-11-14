@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from .schemas import FetchDataResponse
-from .services.terrain import TerrainDataUnavailable, get_terrain_type
+from .services.terrain import (TerrainDataUnavailable, get_terrain_elevation, get_terrain_type,)
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -21,7 +21,8 @@ def fetch_data(lat: float = Query(ge=-90, le=90), long: float = Query(ge=-180, l
     """
     try:
         class_id = get_terrain_type(lat, long)
+        elevation_m = get_terrain_elevation(lat, long)
     except TerrainDataUnavailable as e:
         logger.exception("[routes.py] Terrain lookup failed!")
         raise HTTPException(status_code=503, detail="Lunar terrain data is unavailable!") from e
-    return FetchDataResponse(terrain_type=None if class_id is None else f"LOLA roughness class {class_id}", terrain_class_id=class_id,)
+    return FetchDataResponse(terrain_type=None if class_id is None else f"LOLA roughness class {class_id}", terrain_class_id=class_id, terrain_elevation_m=elevation_m)
