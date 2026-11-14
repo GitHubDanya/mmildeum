@@ -1,13 +1,14 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
 
-    // Explicitly type variables for TypeScript strict mode
     let viewer: any = null;
     let intervalId: ReturnType<typeof setInterval> | undefined = undefined;
-    let handler: any = null; // <-- Add handler reference for cleanup
+    let handler: any = null;
     let Cesium: any = null;
+    let pointPrimitive: any = null;
+    let labelPrimitive: any = null;
+    let selectedCoords: { lat: string; lon: string; alt: string } | null = null;
 
-    // Helper to generate a random number within a min/max range
     function getRandomInRange(min: number, max: number): number {
         return Math.random() * (max - min) + min;
     }
@@ -15,12 +16,10 @@
     function flyToRandomSpot() {
         if (!viewer || !Cesium) return;
 
-        // Random Moon Coordinates
         const randomLongitude = getRandomInRange(-180, 180);
         const randomLatitude = getRandomInRange(-90, 90);
         const randomHeight = getRandomInRange(1000000, 3000000);
-        const randomHeading = getRandomInRange(0, 360);       // Random rotation/facing direction
-        //const randomPitch = getRandomInRange(-90, -45);       // Top-down to angled view
+        const randomHeading = getRandomInRange(0, 360);
         const randomPitch = getRandomInRange(-90, -89);
 
         viewer.camera.flyTo({
@@ -30,12 +29,12 @@
                 pitch: Cesium.Math.toRadians(randomPitch),
                 roll: 0.0
             },
-            duration: 4.0 // 4 second smooth flight animation
+            duration: 4.0
         });
     }
 
     onMount(async () => {
-        window.CESIUM_BASE_URL = '/cesium/';
+        (window as any).CESIUM_BASE_URL = '/cesium/';
 
         Cesium = await import('cesium');
         await import('cesium/Build/Cesium/Widgets/widgets.css');
@@ -71,41 +70,93 @@
             console.error('Failed to load Moon terrain tileset:', error);
         }
 
-        // --- DETECT CLICKS & CONVERT TO LAT/LON ---
+        // Primitive collections render directly in the scene every frame
+        const points = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+        const labels = viewer.scene.primitives.add(new Cesium.LabelCollection());
+
         handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
         handler.setInputAction((movement: { position: any }) => {
-            // 1. Pick the exact 3D position on the Moon tileset surface
-            let cartesian = viewer.scene.pickPosition(movement.position);
+            let cartesian: any = undefined;
 
-            // Fallback to the mathematical Moon ellipsoid if the click missed the 3D tiles
+            // 1. Direct raycast against the Moon 3D tileset (bypasses depth buffer issues)
+            const ray = viewer.camera.getPickRay(movement.position);
+            if (ray && typeof viewer.scene.pickFromRay === 'function') {
+                const hit = viewer.scene.pickFromRay(ray);
+                if (hit && Cesium.defined(hit.position)) {
+                    cartesian = hit.position;
+                }
+            }
+
+            // 2. Fallback to depth-buffer pick, rejecting bogus far-plane readings (> 50km)
+            if (!Cesium.defined(cartesian)) {
+                const picked = viewer.scene.pickPosition(movement.position);
+                if (Cesium.defined(picked)) {
+                    const testCarto = Cesium.Cartographic.fromCartesian(picked, Cesium.Ellipsoid.MOON);
+                    if (testCarto && Math.abs(testCarto.height) < 50000) {
+                        cartesian = picked;
+                    }
+                }
+            }
+
+            // 3. Final fallback to the mathematical Moon ellipsoid
             if (!Cesium.defined(cartesian)) {
                 cartesian = viewer.camera.pickEllipsoid(movement.position, Cesium.Ellipsoid.MOON);
             }
 
-            if (Cesium.defined(cartesian)) {
-                // 2. Convert 3D Cartesian (X, Y, Z) to Cartographic (radians) using the Moon ellipsoid
-                const cartographic = Cesium.Cartographic.fromCartesian(
-                    cartesian,
-                    Cesium.Ellipsoid.MOON
-                );
+            if (!Cesium.defined(cartesian)) return;
 
-                // 3. Convert radians to degrees
-                const latitude = Cesium.Math.toDegrees(cartographic.latitude);
-                const longitude = Cesium.Math.toDegrees(cartographic.longitude);
-                const height = cartographic.height; // Elevation in meters relative to Moon ellipsoid
+            const cartographic = Cesium.Cartographic.fromCartesian(
+                cartesian,
+                Cesium.Ellipsoid.MOON
+            );
 
-                console.log(`Lat: ${latitude.toFixed(5)}°, Lon: ${longitude.toFixed(5)}°, Height: ${height.toFixed(1)}m`);
+            const latitude = Cesium.Math.toDegrees(cartographic.latitude);
+            const longitude = Cesium.Math.toDegrees(cartographic.longitude);
+            const height = cartographic.height;
+
+            selectedCoords = {
+                lat: latitude.toFixed(3),
+                lon: longitude.toFixed(3),
+                alt: height.toFixed(1)
+            };
+
+            const coordText = `Lat: ${selectedCoords.lat}°, Lon: ${selectedCoords.lon}°\nAlt: ${selectedCoords.alt}m`;
+
+            if (pointPrimitive && labelPrimitive) {
+                pointPrimitive.position = cartesian;
+                labelPrimitive.position = cartesian;
+                labelPrimitive.text = coordText;
+            } else {
+                pointPrimitive = points.add({
+                    position: cartesian,
+                    pixelSize: 12,
+                    color: Cesium.Color.RED,
+                    outlineColor: Cesium.Color.WHITE,
+                    outlineWidth: 2,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                });
+
+                labelPrimitive = labels.add({
+                    position: cartesian,
+                    text: coordText,
+                    font: '13px sans-serif',
+                    fillColor: Cesium.Color.WHITE,
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2,
+                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                    pixelOffset: new Cesium.Cartesian2(0, -14),
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
+                });
             }
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
-        flyToRandomSpot();
-        intervalId = setInterval(flyToRandomSpot, 5000);
     });
 
     onDestroy(() => {
         if (intervalId !== undefined) clearInterval(intervalId);
-        if (handler) handler.destroy(); // <-- Prevent memory leaks on unmount
+        if (handler) handler.destroy();
+        if (viewer && !viewer.isDestroyed()) viewer.destroy();
     });
 </script>
 
@@ -113,7 +164,15 @@
 
 <div class="menu">
     <h1 style="margin-top: 10vh;">Lunar Landing Site Navigator</h1>
-    
+    {#if selectedCoords}
+        <p style="text-align: center;">
+            Lat: {selectedCoords.lat}° | Lon: {selectedCoords.lon}° | Alt: {selectedCoords.alt}m
+        </p>
+    {/if}
+</div>
+
+<div class="top-bar">
+    <button class="btn btn-white">Our Scoring Algorithm</button>
 </div>
 
 <style>
@@ -124,12 +183,14 @@
         font-style: normal;
         font-display: swap;
     }
-    
+
     :global(body, html) {
         margin: 0 !important;
         color: #eaeaea;
+        background-color: #000;
         font-family: "Rubik", sans-serif;
     }
+
     #cesiumContainer {
         width: 70vw;
         height: 100vh;
@@ -137,18 +198,59 @@
         padding: 0;
         overflow: hidden;
     }
-    
+
     h1 {
         text-align: center;
     }
-    
+
     .menu {
         position: absolute;
+        box-sizing: border-box;
         height: 100%;
         right: 0;
         top: 0;
-        width: 35vw;
+        width: 40vw;
         padding-left: 10vw;
         background: linear-gradient(to right, rgba(7, 7, 7, 0) 0%, #070707 25%);
+        pointer-events: none;
+    }
+    
+    .top-bar {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        width: 100%;
+        display: flex;
+        flex-direction: row;
+    }
+
+    .btn {
+        border-radius: 10px;
+        box-shadow: none;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.75rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: opacity 0.15s ease;
+        border: none;
+    }
+
+    .btn:hover {
+        opacity: 0.85;
+    }
+
+    .btn:focus-visible {
+        outline: 2px solid #eaeaea;
+        outline-offset: 2px;
+    }
+
+    .btn-white {
+        background-color: #eaeaea;
+        color: #070707;
+    }
+
+    .btn-black {
+        background-color: #070707;
+        color: #eaeaea;
     }
 </style>
