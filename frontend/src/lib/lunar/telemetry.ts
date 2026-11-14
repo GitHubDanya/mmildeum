@@ -2,17 +2,19 @@ import type {
     DateEvaluation,
     EarthEphemeris,
     FetchDataResponse,
+    MissionSunlightMetrics,
     RecommendedDateWindow,
     SelectedSite,
+    SunlightDurationResponse,
     VisibilityWindow
 } from './types';
 
 export const HOURS_LABELS = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}h`);
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
-// Synodic lunar day constants anchored to J2000 New Moon (Jan 6, 2000 18:14 UTC)
 const SYNODIC_MONTH_MS = 29.530588853 * 24 * 3600 * 1000;
 const J2000_NEW_MOON_MS = Date.UTC(2000, 0, 6, 18, 14, 0);
+const J2000_EPOCH_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
 
 const MONTH_INDEX: Record<string, number> = {
     Jan: 0,
@@ -31,15 +33,19 @@ const MONTH_INDEX: Record<string, number> = {
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-const J2000_EPOCH_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
-
 function deg2rad(deg: number): number {
     return (deg * Math.PI) / 180;
 }
 
 function normalizeDeg180(deg: number): number {
-    let wrapped = ((deg + 180) % 360 + 360) % 360 - 180;
-    return wrapped;
+    return (((deg + 180) % 360) + 360) % 360 - 180;
+}
+
+function firstFiniteNumber(...values: Array<number | null | undefined>): number | null {
+    for (const v of values) {
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+    return null;
 }
 
 export function getScoreClass(score: number): string {
@@ -95,6 +101,15 @@ export function formatShortDateOnlyUtc(ms: number): string {
     return `${mon} ${day}`;
 }
 
+export function formatDurationHours(hours: number): string {
+    if (!Number.isFinite(hours) || hours <= 0) return '0h';
+    if (hours < 48) {
+        return `${Number(hours.toFixed(1))}h`;
+    }
+    const days = hours / 24;
+    return Number.isInteger(days) ? `${days}d (${hours}h)` : `${days.toFixed(1)}d (${Math.round(hours)}h)`;
+}
+
 export function formatWindowRange(win: VisibilityWindow): string {
     const startMs = parseLunarTimestamp(win.start);
     const endMs = parseLunarTimestamp(win.end);
@@ -104,9 +119,46 @@ export function formatWindowRange(win: VisibilityWindow): string {
     return `${win.start} → ${win.end}`;
 }
 
-/**
- * Derives timeline start/end bounds from site visibility windows, defaulting to Oct 2026.
- */
+export function computeEarthPositionFromMoon(timestampMs: number): EarthEphemeris {
+    const d = (timestampMs - J2000_EPOCH_MS) / 86400000;
+
+    const Mm = deg2rad(134.9633964 + 13.06499295 * d);
+    const F = deg2rad(93.272095 + 13.22935024 * d);
+    const Ms = deg2rad(357.5291092 + 0.98560028 * d);
+    const D = deg2rad(297.8501921 + 12.19074912 * d);
+
+    const subEarthLonDeg =
+        -6.289 * Math.sin(Mm) -
+        1.274 * Math.sin(2 * D - Mm) -
+        0.658 * Math.sin(2 * D) -
+        0.214 * Math.sin(2 * Mm) +
+        0.186 * Math.sin(Ms);
+
+    const subEarthLatDeg =
+        -6.688 * Math.sin(F) -
+        0.28 * Math.sin(Mm + F) -
+        0.28 * Math.sin(Mm - F);
+
+    const distanceKm =
+        385000.56 -
+        20905.355 * Math.cos(Mm) -
+        3699.111 * Math.cos(2 * D - Mm) -
+        2955.968 * Math.cos(2 * D) -
+        569.925 * Math.cos(2 * Mm);
+
+    const sunLonDeg = normalizeDeg180(180 - (D * 180) / Math.PI + subEarthLonDeg);
+    const sunLatDeg = -1.542 * Math.sin(F - D);
+
+    return {
+        subEarthLatDeg: Number(subEarthLatDeg.toFixed(2)),
+        subEarthLonDeg: Number(subEarthLonDeg.toFixed(2)),
+        distanceKm: Math.round(distanceKm),
+        distanceM: distanceKm * 1000,
+        sunLonDeg,
+        sunLatDeg
+    };
+}
+
 export function getTimelineBounds(sites: SelectedSite[]): { startMs: number; endMs: number } {
     const allTimestamps: number[] = [];
 
@@ -135,60 +187,7 @@ export function getTimelineBounds(sites: SelectedSite[]): { startMs: number; end
     };
 }
 
-
-/**
- * Computes Earth's selenocentric position (sub-Earth libration lat/lon, distance)
- * and solar direction in the Moon-fixed Principal Axis / Mean Earth frame.
- */
-export function computeEarthPositionFromMoon(timestampMs: number): EarthEphemeris {
-    const d = (timestampMs - J2000_EPOCH_MS) / 86400000;
-
-    // Fundamental lunar & solar orbital arguments (degrees -> radians)
-    const Mm = deg2rad(134.9633964 + 13.06499295 * d); // Moon mean anomaly
-    const F = deg2rad(93.272095 + 13.22935024 * d); // Moon argument of latitude
-    const Ms = deg2rad(357.5291092 + 0.98560028 * d); // Sun mean anomaly
-    const D = deg2rad(297.8501921 + 12.19074912 * d); // Mean elongation
-
-    // Optical libration in longitude & latitude (sub-Earth point on Moon)
-    const subEarthLonDeg =
-        -6.289 * Math.sin(Mm) -
-        1.274 * Math.sin(2 * D - Mm) -
-        0.658 * Math.sin(2 * D) -
-        0.214 * Math.sin(2 * Mm) +
-        0.186 * Math.sin(Ms);
-
-    const subEarthLatDeg =
-        -6.688 * Math.sin(F) -
-        0.28 * Math.sin(Mm + F) -
-        0.28 * Math.sin(Mm - F);
-
-    // Earth-Moon center-to-center distance
-    const distanceKm =
-        385000.56 -
-        20905.355 * Math.cos(Mm) -
-        3699.111 * Math.cos(2 * D - Mm) -
-        2955.968 * Math.cos(2 * D) -
-        569.925 * Math.cos(2 * Mm);
-
-    // Solar direction in Moon-fixed coordinates (for Earth phase illumination)
-    const sunLonDeg = normalizeDeg180(180 - (D * 180) / Math.PI + subEarthLonDeg);
-    const sunLatDeg = -1.542 * Math.sin(F - D);
-
-    return {
-        subEarthLatDeg: Number(subEarthLatDeg.toFixed(2)),
-        subEarthLonDeg: Number(subEarthLonDeg.toFixed(2)),
-        distanceKm: Math.round(distanceKm),
-        distanceM: distanceKm * 1000,
-        sunLonDeg,
-        sunLatDeg
-    };
-}
-
-/**
- * Computes solar elevation angle (deg) and Earth LOS visibility for a site at a given UTC timestamp.
- */
 export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number): DateEvaluation {
-    // 1. Check Earth LOS visibility windows
     const parsedWindows = site.visibilityWindows
         .map((w) => ({
             startMs: parseLunarTimestamp(w.start),
@@ -201,11 +200,9 @@ export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number)
         ? parsedWindows.some((w) => timestampMs >= w.startMs && timestampMs <= w.endMs)
         : Math.cos((site.rawLon * Math.PI) / 180) > -0.15;
 
-    // 2. Compute solar illumination angle from lunar synodic phase + site coordinates
     const rawPhase = ((timestampMs - J2000_NEW_MOON_MS) % SYNODIC_MONTH_MS) / SYNODIC_MONTH_MS;
     const phase = rawPhase < 0 ? rawPhase + 1 : rawPhase;
 
-    // At New Moon (phase 0), subsolar lon is 180°; at Full Moon (phase 0.5), subsolar lon is 0°
     let subsolarLon = (0.5 - phase) * 360;
     while (subsolarLon > 180) subsolarLon -= 360;
     while (subsolarLon < -180) subsolarLon += 360;
@@ -214,7 +211,6 @@ export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number)
     const latRad = (site.rawLat * Math.PI) / 180;
     const cosZ = Math.cos(latRad) * Math.cos(hourAngleRad);
 
-    // Calibrate daytime peak with API daytime_avg_sun_angle if available (mean of cos over [-pi/2, pi/2] is 2/pi)
     const geometricMaxDeg = Math.max(5, Math.acos(Math.sin(Math.abs(latRad))) * (180 / Math.PI));
     const peakAngleDeg =
         site.daytimeAvgSunAngle !== null && site.daytimeAvgSunAngle > 0
@@ -224,12 +220,10 @@ export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number)
     const sunAngleDeg = cosZ > 0 ? Number((cosZ * peakAngleDeg).toFixed(1)) : 0;
     const isDaylight = sunAngleDeg > 1.0;
 
-    // 3. Score landing viability for this timestamp (0..100)
     let suitabilityScore = 0;
     if (isEarthVisible) suitabilityScore += 50;
     if (isDaylight) {
         suitabilityScore += 35;
-        // Ideal landing sun elevation is 5°–35° (good crater shadow definition + solar power)
         if (sunAngleDeg >= 5 && sunAngleDeg <= 35) {
             suitabilityScore += 15;
         } else {
@@ -251,23 +245,43 @@ export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number)
 }
 
 /**
- * Finds contiguous recommended landing windows across [startMs, endMs] for 1 or 2 target sites.
+ * Finds contiguous recommended landing start dates across [startMs, endMs],
+ * scoring each candidate touchdown date across the full mission duration.
  */
 export function findRecommendedLandingWindows(
     targetSites: SelectedSite[],
     startMs: number,
-    endMs: number
+    endMs: number,
+    missionDurationHours = 72
 ): RecommendedDateWindow[] {
     if (targetSites.length === 0 || endMs <= startMs) return [];
 
     const stepMs = 6 * 3600 * 1000;
+    const durationMs = Math.max(1, missionDurationHours) * 3600 * 1000;
     const samples: { t: number; score: number; allOptimal: boolean }[] = [];
 
     for (let t = startMs; t <= endMs; t += stepMs) {
-        const evals = targetSites.map((s) => evaluateSiteAtTimestamp(s, t));
-        const avgScore = evals.reduce((acc, e) => acc + e.suitabilityScore, 0) / evals.length;
-        const allOptimal = evals.every((e) => e.status === 'Optimal');
-        samples.push({ t, score: avgScore, allOptimal });
+        // Sample start, midpoint, and end of the mission interval [t, t + durationMs]
+        const missionEnd = t + durationMs;
+        const checkpoints =
+            durationMs <= stepMs
+                ? [t]
+                : [t, t + durationMs * 0.33, t + durationMs * 0.67, missionEnd];
+
+        let totalScore = 0;
+        let allCheckpointsOptimal = true;
+
+        for (const cp of checkpoints) {
+            const evals = targetSites.map((s) => evaluateSiteAtTimestamp(s, cp));
+            const cpAvg = evals.reduce((acc, e) => acc + e.suitabilityScore, 0) / evals.length;
+            totalScore += cpAvg;
+            if (!evals.every((e) => e.status === 'Optimal')) {
+                allCheckpointsOptimal = false;
+            }
+        }
+
+        const avgScore = totalScore / checkpoints.length;
+        samples.push({ t, score: avgScore, allOptimal: allCheckpointsOptimal });
     }
 
     const collectSegments = (predicate: (s: (typeof samples)[number]) => boolean) => {
@@ -326,16 +340,13 @@ export function findRecommendedLandingWindows(
         return segments;
     };
 
-    // Prefer windows where all target sites are simultaneously Optimal (Earth LOS + Daylight)
     let windows = collectSegments((s) => s.allOptimal);
-
-    // Fallback to best partial windows if no joint optimal overlap exists
     if (windows.length === 0) {
-        windows = collectSegments((s) => s.score >= 50);
+        windows = collectSegments((s) => s.score >= 55);
     }
 
     return windows
-        .sort((a, b) => b.endMs - b.startMs - (a.endMs - a.startMs))
+        .sort((a, b) => b.avgScore - a.avgScore || b.endMs - b.startMs - (a.endMs - a.startMs))
         .slice(0, 3);
 }
 
@@ -445,17 +456,17 @@ export async function fetchSiteTelemetry(
     const builtVisibility = hasRealVisibility
         ? buildVisibilityFromWindows(visibilityWindows)
         : {
-              series: fallback.earthVisibility24h,
-              labels: HOURS_LABELS,
-              coveragePct: null
-          };
+            series: fallback.earthVisibility24h,
+            labels: HOURS_LABELS,
+            coveragePct: null
+        };
 
     const groundAngle =
         typeof data.ground_angle_deg === 'number' && Number.isFinite(data.ground_angle_deg)
             ? data.ground_angle_deg
             : typeof data.ground_angle === 'number' && Number.isFinite(data.ground_angle)
-              ? data.ground_angle
-              : null;
+                ? data.ground_angle
+                : null;
 
     const lolaRoughnessDeg =
         typeof data.lola_roughness_deg === 'number' && Number.isFinite(data.lola_roughness_deg)
@@ -469,8 +480,8 @@ export async function fetchSiteTelemetry(
         typeof data.peak === 'number'
             ? data.peak
             : typeof data.peak_sun_angle === 'number'
-              ? data.peak_sun_angle
-              : Math.max(...sunlightAngle24h);
+                ? data.peak_sun_angle
+                : Math.max(...sunlightAngle24h);
 
     return {
         score: validScore,
@@ -492,5 +503,125 @@ export async function fetchSiteTelemetry(
         sunlight24h,
         sunlightAngle24h,
         isEstimatedSunSeries: !hasRealSunSeries
+    };
+}
+
+/**
+ * Calls GET /sunlight-duration for a candidate lunar site across [startMs, endMs].
+ */
+export async function fetchSunlightDuration(
+    lat: number,
+    lon: number,
+    startMs: number,
+    endMs: number,
+    stepMinutes = 60,
+    signal?: AbortSignal
+): Promise<MissionSunlightMetrics> {
+    const safeEndMs = Math.max(endMs, startMs + 3600 * 1000);
+    const startIso = new Date(startMs).toISOString();
+    const endIso = new Date(safeEndMs).toISOString();
+    const clampedStep = Math.max(1, Math.min(1440, Math.round(stepMinutes)));
+
+    const params = new URLSearchParams({
+        lat: lat.toString(),
+        long: lon.toString(),
+        start: startIso,
+        end: endIso,
+        step_minutes: clampedStep.toString()
+    });
+
+    const response = await fetch(`${API_BASE_URL}/sunlight-duration?${params.toString()}`, {
+        signal
+    });
+
+    if (!response.ok) {
+        let detail = `HTTP ${response.status}`;
+        try {
+            const errPayload = await response.json();
+            if (typeof errPayload?.detail === 'string') {
+                detail = errPayload.detail;
+            }
+        } catch {
+            // Ignore non-JSON error body
+        }
+        throw new Error(detail);
+    }
+
+    const data: SunlightDurationResponse = await response.json();
+
+    const fallbackMissionHours = (safeEndMs - startMs) / (3600 * 1000);
+    const missionHours =
+        firstFiniteNumber(data.total_duration_hours, data.interval_hours, data.total_hours) ??
+        fallbackMissionHours;
+
+    const resolvedStep = firstFiniteNumber(data.step_minutes) ?? clampedStep;
+    const sampleCount = firstFiniteNumber(data.total_samples, data.sample_count);
+    const sunlitSampleCount = firstFiniteNumber(data.sunlit_samples, data.sunlight_samples);
+
+    const directHours = firstFiniteNumber(
+        data.sunlight_duration_hours,
+        data.average_sunlight_duration_hours,
+        data.avg_sunlight_duration_hours,
+        data.total_sunlight_hours,
+        data.sunlight_hours,
+        data.duration_hours
+    );
+
+    const directMinutes = firstFiniteNumber(
+        data.sunlight_duration_minutes,
+        data.sunlight_minutes,
+        data.duration_minutes
+    );
+
+    const directSeconds = firstFiniteNumber(
+        data.sunlight_duration_seconds,
+        data.sunlight_seconds
+    );
+
+    const directPct = firstFiniteNumber(
+        data.sunlight_percentage,
+        data.sunlit_percentage,
+        data.sunlight_percent
+    );
+
+    const directFraction = firstFiniteNumber(
+        data.sunlight_fraction,
+        data.sunlit_fraction,
+        data.sunlight_ratio
+    );
+
+    let sunlitHours = 0;
+    if (directHours !== null) {
+        sunlitHours = directHours;
+    } else if (directMinutes !== null) {
+        sunlitHours = directMinutes / 60;
+    } else if (directSeconds !== null) {
+        sunlitHours = directSeconds / 3600;
+    } else if (directPct !== null) {
+        sunlitHours = (directPct / 100) * missionHours;
+    } else if (directFraction !== null) {
+        sunlitHours = directFraction * missionHours;
+    } else if (sunlitSampleCount !== null) {
+        sunlitHours = (sunlitSampleCount * resolvedStep) / 60;
+    }
+
+    const sunlitPercentage =
+        directPct !== null
+            ? directPct
+            : directFraction !== null
+                ? directFraction * 100
+                : missionHours > 0
+                    ? (sunlitHours / missionHours) * 100
+                    : 0;
+
+    return {
+        startIso,
+        endIso,
+        missionHours: Number(missionHours.toFixed(2)),
+        sunlitHours: Number(Math.max(0, sunlitHours).toFixed(2)),
+        sunlitPercentage: Number(Math.max(0, Math.min(100, sunlitPercentage)).toFixed(1)),
+        stepMinutes: resolvedStep,
+        sampleCount,
+        sunlitSampleCount
     };
 }

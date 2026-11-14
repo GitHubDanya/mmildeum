@@ -1,12 +1,18 @@
 <script lang="ts">
     import type { SelectedSite } from './types';
-    import { evaluateSiteAtTimestamp, formatShortDateOnlyUtc, getScoreClass } from './telemetry';
+    import {
+        evaluateSiteAtTimestamp,
+        formatDurationHours,
+        formatShortDateOnlyUtc,
+        getScoreClass
+    } from './telemetry';
     import TelemetryChart from './TelemetryChart.svelte';
 
     export let siteA: SelectedSite;
     export let siteB: SelectedSite;
     export let allSites: SelectedSite[] = [];
     export let selectedTimeMs: number;
+    export let missionDurationHours = 72;
     export let timelineStartMs: number;
     export let onChangePair: (pair: [number, number]) => void;
     export let onBack: () => void;
@@ -51,6 +57,12 @@
     $: evalA = evaluateSiteAtTimestamp(siteA, selectedTimeMs);
     $: evalB = evaluateSiteAtTimestamp(siteB, selectedTimeMs);
     $: dateWinner = compareWinner(evalA.suitabilityScore, evalB.suitabilityScore, true);
+
+    $: missionSunWinner = compareWinner(
+        siteA.missionSunlight?.sunlitHours ?? null,
+        siteB.missionSunlight?.sunlitHours ?? null,
+        true
+    );
 
     $: scoreWinner = compareWinner(siteA.score, siteB.score, true);
     $: slopeWinner = compareWinner(siteA.groundAngle, siteB.groundAngle, false);
@@ -240,6 +252,37 @@
                     <span>Metric</span>
                     <span style="color: {COLOR_A};">{siteA.name}</span>
                     <span style="color: {COLOR_B};">{siteB.name}</span>
+                </div>
+
+                <!-- Mission Sunlight Duration Row (/sunlight-duration) -->
+                <div class="metric-row mission-row">
+                    <span class="m-label">
+                        Mission Sun ({formatDurationHours(missionDurationHours)})
+                    </span>
+                    <span class="m-val" class:winner={missionSunWinner === 'A'}>
+                        {#if siteA.loadingMissionSunlight}
+                            ...
+                        {:else if siteA.missionSunlight}
+                            {siteA.missionSunlight.sunlitHours.toFixed(1)}h
+                            <small class="m-sub">
+                                {siteA.missionSunlight.sunlitPercentage.toFixed(0)}% sunlit
+                            </small>
+                        {:else}
+                            N/A
+                        {/if}
+                    </span>
+                    <span class="m-val" class:winner={missionSunWinner === 'B'}>
+                        {#if siteB.loadingMissionSunlight}
+                            ...
+                        {:else if siteB.missionSunlight}
+                            {siteB.missionSunlight.sunlitHours.toFixed(1)}h
+                            <small class="m-sub">
+                                {siteB.missionSunlight.sunlitPercentage.toFixed(0)}% sunlit
+                            </small>
+                        {:else}
+                            N/A
+                        {/if}
+                    </span>
                 </div>
 
                 <div class="metric-row highlight-row">
@@ -529,6 +572,11 @@
         background-color: rgba(7, 7, 7, 0.5);
         border: 1px solid rgba(234, 234, 234, 0.08);
         font-size: 0.78rem;
+    }
+
+    .metric-row.mission-row {
+        background-color: rgba(250, 204, 21, 0.07);
+        border-color: rgba(250, 204, 21, 0.28);
     }
 
     .metric-row.highlight-row {
