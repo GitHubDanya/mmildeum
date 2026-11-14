@@ -1,6 +1,6 @@
 """Terrain-aware lunar horizon calculations from a LOLA elevation raster."""
 
-from math import atan2, ceil, cos, degrees, floor, isclose, isfinite, sin
+from math import ceil, floor, isclose, isfinite
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +9,8 @@ import rasterio
 from pyproj import CRS, Geod, Transformer
 from pyproj.exceptions import ProjError
 from rasterio.errors import RasterioError
+from rasterio.transform import rowcol
+from rasterio.windows import Window
 
 from app.services.terrain import ELEVATION_MAP, TerrainDataUnavailable
 
@@ -75,6 +77,78 @@ def _sample_elevation(dataset: Any, x: float, y: float) -> float | None:
     value = float(pixel) * dataset.scales[0] + dataset.offsets[0]
 
     return value if isfinite(value) else None
+
+
+def _sample_ray_elevations(
+    dataset: Any,
+    xs: np.ndarray,
+    ys: np.ndarray,
+) -> np.ndarray:
+    """Read terrain elevations for an entire ray.
+
+    Args:
+        dataset: Open Rasterio elevation dataset.
+        xs: Projected X coordinates along the ray.
+        ys: Projected Y coordinates along the ray.
+
+    Returns:
+        Array of elevations in meters.
+        Missing or out-of-bounds pixels are represented by NaN.
+    """
+    # Calculate pixel indices for all positions at once.
+    rows, cols = rowcol(dataset.transform, xs, ys)
+
+    rows = np.asarray(rows, dtype=np.int64)
+    cols = np.asarray(cols, dtype=np.int64)
+
+    elevations = np.full(xs.shape, np.nan, dtype=np.float64)
+
+    # Identify positions inside the DEM coverage.
+    inside = (
+        (rows >= 0)
+        & (rows < dataset.height)
+        & (cols >= 0)
+        & (cols < dataset.width)
+    )
+
+    if not np.any(inside):
+        return elevations
+
+    row_min = int(rows[inside].min())
+    row_max = int(rows[inside].max())
+    col_min = int(cols[inside].min())
+    col_max = int(cols[inside].max())
+
+    # Read one raster window containing all valid positions.
+    window = Window(
+        col_off=col_min,
+        row_off=row_min,
+        width=col_max - col_min + 1,
+        height=row_max - row_min + 1,
+    )
+
+    pixels = dataset.read(
+        1,
+        window=window,
+        masked=True,
+    )
+
+    # Extract the requested pixels from the loaded window.
+    selected = pixels[
+        rows[inside] - row_min,
+        cols[inside] - col_min,
+    ]
+
+    # Convert stored pixel values into physical elevations.
+    scaled = (
+        selected.astype(np.float64) * dataset.scales[0]
+        + dataset.offsets[0]
+    )
+
+    elevations[inside] = scaled.filled(np.nan)
+
+    return elevations
+
 
 
 
@@ -188,6 +262,7 @@ def get_terrain_horizon(
             azimuths = np.arange(ray_count, dtype=float) * azimuth_step_deg
             profile = []
 
+            
             for azimuth in azimuths:
                 longitudes, latitudes, _ = geodesic.fwd(
                     np.full(len(distances), lon),
@@ -196,34 +271,64 @@ def get_terrain_horizon(
                     distances,
                 )
 
-                xs, ys = projection.transform(longitudes, latitudes, errcheck=True)
+                xs, ys = projection.transform(
+                    longitudes,
+                    latitudes,
+                    errcheck=True,
+                )
 
-                highest_angle = -90.0
-                covered = True
+                elevations = _sample_ray_elevations(
+                    dataset,
+                    np.asarray(xs),
+                    np.asarray(ys),
+                )
 
-                for distance, x, y in zip(distances, xs, ys):
-                    elevation = _sample_elevation(dataset, float(x), float(y))
+                # Stop at the first missing pixel to preserve continuous coverage.
+                gaps = np.flatnonzero(~np.isfinite(elevations))
 
-                    if elevation is None:
-                        covered = False
-                        break
+                prefix_len = (
+                    int(gaps[0])
+                    if len(gaps)
+                    else len(distances)
+                )
 
-                    central_angle = float(distance) / moon_radius_m
-                    target_radius = moon_radius_m + elevation
+                covered_distances = distances[:prefix_len]
 
-                    angle = degrees(
-                        atan2(
-                            target_radius * cos(central_angle) - observer_radius,
-                            target_radius * sin(central_angle),
+                if prefix_len:
+                    central_angles = covered_distances / moon_radius_m
+
+                    target_radii = (
+                        moon_radius_m + elevations[:prefix_len]
+                    )
+
+                    angles = np.degrees(
+                        np.arctan2(
+                            target_radii * np.cos(central_angles)
+                            - observer_radius,
+                            target_radii * np.sin(central_angles),
                         )
                     )
 
-                    highest_angle = max(highest_angle, angle)
+                    horizon_angle = float(angles.max())
+                else:
+                    horizon_angle = None
+
+                complete = prefix_len == len(distances)
 
                 profile.append(
                     dict(
                         azimuth_deg=float(azimuth),
-                        horizon_elevation_deg=highest_angle if covered else None,
+                        horizon_elevation_deg=(
+                            horizon_angle if complete else None
+                        ),
+                        partial_horizon_elevation_deg=(
+                            horizon_angle if not complete else None
+                        ),
+                        covered_distance_m=(
+                            float(covered_distances[-1])
+                            if prefix_len
+                            else 0.0
+                        ),
                     )
                 )
 
