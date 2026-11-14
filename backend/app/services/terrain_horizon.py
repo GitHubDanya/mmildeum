@@ -1,6 +1,6 @@
-"""Terrain-aware lunar horizon calculations from a LOLA elevation raster."""
+"""Terrain-aware lunar horizon calculations from LOLA elevation rasters."""
 
-from math import ceil, floor, isclose, isfinite
+from math import ceil, floor, isclose, isfinite, pi
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +12,15 @@ from rasterio.errors import RasterioError
 from rasterio.transform import rowcol
 from rasterio.windows import Window
 
+import app.services.terrain as terrain_service
 from app.services.terrain import ELEVATION_MAP, TerrainDataUnavailable
+
+# Global 64 ppd equirectangular LOLA DEM used when the regional DEM lacks coverage.
+GLOBAL_ELEVATION_MAP: Path = getattr(
+    terrain_service,
+    "GLOBAL_ELEVATION_MAP",
+    ELEVATION_MAP.parent / "LDEM64_PA_eqc_m.tif",
+)
 
 # Limit raster sampling work per request to control CPU and I/O costs.
 # This is a performance safeguard, not a scientific accuracy threshold.
@@ -20,19 +28,7 @@ MAX_SAMPLES = 250_000
 
 
 def _finite(value: object, name: str) -> float:
-    """Validate a numeric input and convert it to a finite float.
-
-    Args:
-        value: Numeric input value to validate.
-        name: Parameter name used in error messages.
-
-    Returns:
-        The validated finite floating-point number.
-
-    Raises:
-        ValueError: If the value is not numeric, is a boolean,
-            is infinite, or is NaN.
-    """
+    """Validate a numeric input and convert it to a finite float."""
     if isinstance(value, bool):
         raise ValueError(f"{name} must be a finite number")
 
@@ -47,63 +43,113 @@ def _finite(value: object, name: str) -> float:
     return number
 
 
+def _is_global_longitude_raster(
+    dataset: Any,
+    moon_radius_m: float,
+    *,
+    is_geographic: bool = False,
+) -> bool:
+    """Return True if the raster spans 360 degrees of lunar longitude."""
+    if dataset.transform.b != 0 or dataset.transform.d != 0:
+        return False
 
-def _sample_elevation(dataset: Any, x: float, y: float) -> float | None:
-    """Read terrain elevation from a projected DEM coordinate.
+    width = abs(dataset.bounds.right - dataset.bounds.left)
+    full_circle = 360.0 if is_geographic else 2.0 * pi * moon_radius_m
 
-    Args:
-        dataset: Open Rasterio dataset containing elevation data.
-        x: X coordinate in the DEM coordinate reference system.
-        y: Y coordinate in the DEM coordinate reference system.
+    return isclose(width, full_circle, rel_tol=1e-4)
 
-    Returns:
-        Terrain elevation in meters, or None if the coordinate
-        is outside the raster or contains invalid or missing data.
-    """
-    # Convert projected coordinates into raster row and column indices.
+
+def _align_geographic_longitudes(xs: np.ndarray, dataset: Any) -> np.ndarray:
+    """Align [-180, 180] longitudes to [0, 360) if the raster uses 0..360 bounds."""
+    if dataset.bounds.left >= 0.0 and dataset.bounds.right > 180.0:
+        return np.mod(xs, 360.0)
+    return xs
+
+
+def _sample_elevation(
+    dataset: Any,
+    x: float,
+    y: float,
+    *,
+    wrap_longitude: bool = False,
+) -> float | None:
+    """Read terrain elevation from a projected or geographic DEM coordinate."""
     row, col = dataset.index(x, y)
 
-    # Check raster bounds before accessing the pixel.
+    if row == dataset.height and isclose(y, dataset.bounds.bottom, abs_tol=1e-3):
+        row = dataset.height - 1
+
+    if wrap_longitude:
+        col %= dataset.width
+
     if not (0 <= row < dataset.height and 0 <= col < dataset.width):
         return None
 
-    # Read the pixel while preserving the raster's NoData mask.
-    pixel = next(dataset.sample([(x, y)], indexes=1, masked=True))[0]
+    window = Window(col_off=col, row_off=row, width=1, height=1)
+    pixel = dataset.read(1, window=window, masked=True)[0, 0]
 
     if np.ma.is_masked(pixel):
         return None
 
-    # Apply the raster scale and offset to obtain physical elevation.
     value = float(pixel) * dataset.scales[0] + dataset.offsets[0]
-
     return value if isfinite(value) else None
+
+
+def _read_window_elevations(
+    dataset: Any,
+    rows: np.ndarray,
+    cols: np.ndarray,
+    mask: np.ndarray,
+    elevations: np.ndarray,
+) -> None:
+    """Populate elevations for masked indices using a single bounding window."""
+    if not np.any(mask):
+        return
+
+    sub_rows = rows[mask]
+    sub_cols = cols[mask]
+
+    row_min = int(sub_rows.min())
+    row_max = int(sub_rows.max())
+    col_min = int(sub_cols.min())
+    col_max = int(sub_cols.max())
+
+    window = Window(
+        col_off=col_min,
+        row_off=row_min,
+        width=col_max - col_min + 1,
+        height=row_max - row_min + 1,
+    )
+
+    pixels = dataset.read(1, window=window, masked=True)
+    selected = pixels[sub_rows - row_min, sub_cols - col_min]
+    scaled = selected.astype(np.float64) * dataset.scales[0] + dataset.offsets[0]
+    elevations[mask] = scaled.filled(np.nan)
 
 
 def _sample_ray_elevations(
     dataset: Any,
     xs: np.ndarray,
     ys: np.ndarray,
+    *,
+    wrap_longitude: bool = False,
 ) -> np.ndarray:
-    """Read terrain elevations for an entire ray.
-
-    Args:
-        dataset: Open Rasterio elevation dataset.
-        xs: Projected X coordinates along the ray.
-        ys: Projected Y coordinates along the ray.
-
-    Returns:
-        Array of elevations in meters.
-        Missing or out-of-bounds pixels are represented by NaN.
-    """
-    # Calculate pixel indices for all positions at once.
+    """Read terrain elevations for an entire ray."""
     rows, cols = rowcol(dataset.transform, xs, ys)
-
     rows = np.asarray(rows, dtype=np.int64)
     cols = np.asarray(cols, dtype=np.int64)
 
+    # Clamp exact South Pole samples landing on the bottom raster edge.
+    south_edge = (rows == dataset.height) & np.isclose(
+        ys, dataset.bounds.bottom, atol=1e-3
+    )
+    rows[south_edge] = dataset.height - 1
+
+    if wrap_longitude:
+        cols = cols % dataset.width
+
     elevations = np.full(xs.shape, np.nan, dtype=np.float64)
 
-    # Identify positions inside the DEM coverage.
     inside = (
         (rows >= 0)
         & (rows < dataset.height)
@@ -114,42 +160,212 @@ def _sample_ray_elevations(
     if not np.any(inside):
         return elevations
 
-    row_min = int(rows[inside].min())
-    row_max = int(rows[inside].max())
-    col_min = int(cols[inside].min())
-    col_max = int(cols[inside].max())
-
-    # Read one raster window containing all valid positions.
-    window = Window(
-        col_off=col_min,
-        row_off=row_min,
-        width=col_max - col_min + 1,
-        height=row_max - row_min + 1,
-    )
-
-    pixels = dataset.read(
-        1,
-        window=window,
-        masked=True,
-    )
-
-    # Extract the requested pixels from the loaded window.
-    selected = pixels[
-        rows[inside] - row_min,
-        cols[inside] - col_min,
-    ]
-
-    # Convert stored pixel values into physical elevations.
-    scaled = (
-        selected.astype(np.float64) * dataset.scales[0]
-        + dataset.offsets[0]
-    )
-
-    elevations[inside] = scaled.filled(np.nan)
+    # Split window reads when a ray crosses the antimeridian on a global DEM.
+    if wrap_longitude and (
+        int(cols[inside].max()) - int(cols[inside].min()) > dataset.width // 2
+    ):
+        half_width = dataset.width // 2
+        _read_window_elevations(
+            dataset, rows, cols, inside & (cols < half_width), elevations
+        )
+        _read_window_elevations(
+            dataset, rows, cols, inside & (cols >= half_width), elevations
+        )
+    else:
+        _read_window_elevations(dataset, rows, cols, inside, elevations)
 
     return elevations
 
 
+def _compute_terrain_horizon(
+    lat: float,
+    lon: float,
+    *,
+    raster_path: Path,
+    observer_height_m: float,
+    max_distance_m: float,
+    azimuth_step_deg: float,
+    distance_step_m: float | None,
+) -> dict[str, Any]:
+    """Compute a terrain-aware horizon profile against a specific DEM file."""
+    if not raster_path.is_file():
+        raise TerrainDataUnavailable(f"LOLA elevation DEM is missing: {raster_path}")
+
+    ray_count = int(round(360.0 / azimuth_step_deg))
+
+    try:
+        with rasterio.open(raster_path) as dataset:
+            if dataset.count < 1 or dataset.crs is None:
+                raise TerrainDataUnavailable("Expected a lunar elevation DEM with a valid CRS")
+
+            map_crs = CRS.from_wkt(dataset.crs.to_wkt())
+            if not map_crs.axis_info:
+                raise TerrainDataUnavailable("DEM CRS has no axis unit metadata")
+
+            unit_factor = map_crs.axis_info[0].unit_conversion_factor
+            is_geographic = map_crs.is_geographic
+
+            if map_crs.is_projected:
+                if not isclose(unit_factor, 1.0, abs_tol=1e-9):
+                    raise TerrainDataUnavailable("Projected DEM units must be meters")
+            elif is_geographic:
+                if not isclose(unit_factor, pi / 180.0, rel_tol=1e-6):
+                    raise TerrainDataUnavailable("Geographic DEM units must be degrees")
+            else:
+                raise TerrainDataUnavailable(
+                    "Expected a projected or geographic lunar elevation DEM"
+                )
+
+            if map_crs.ellipsoid is None:
+                raise TerrainDataUnavailable("DEM has no valid lunar reference ellipsoid")
+
+            moon_radius_m = map_crs.ellipsoid.semi_major_metre
+
+            if not isfinite(moon_radius_m) or moon_radius_m <= 0:
+                raise TerrainDataUnavailable("DEM has no valid lunar reference radius")
+
+            if not isclose(
+                map_crs.ellipsoid.semi_minor_metre, moon_radius_m, rel_tol=1e-9
+            ):
+                raise TerrainDataUnavailable("A spherical lunar DEM is required")
+
+            res_scale_m = unit_factor * moon_radius_m if is_geographic else 1.0
+            res_m = [abs(dataset.res[0]) * res_scale_m, abs(dataset.res[1]) * res_scale_m]
+
+            spacing = (
+                min(res_m)
+                if distance_step_m is None
+                else _finite(distance_step_m, "distance_step_m")
+            )
+
+            if spacing <= 0 or spacing > max_distance_m:
+                raise ValueError("distance_step_m must be in (0, max_distance_m]")
+
+            if ceil(max_distance_m / spacing) * ray_count > MAX_SAMPLES:
+                raise ValueError("Too many ray samples; increase distance/azimuth step")
+
+            wrap_longitude = _is_global_longitude_raster(
+                dataset,
+                moon_radius_m,
+                is_geographic=is_geographic,
+            )
+
+            distances = np.arange(spacing, max_distance_m, spacing)
+            distances = np.append(distances, max_distance_m)
+
+            projection = Transformer.from_crs(
+                map_crs.geodetic_crs, map_crs, always_xy=True
+            )
+
+            norm_lon = 0.0 if abs(lat) == 90 else (lon + 180.0) % 360.0 - 180.0
+            origin_x, origin_y = projection.transform(
+                norm_lon,
+                lat,
+                errcheck=True,
+            )
+            if is_geographic:
+                origin_x = float(_align_geographic_longitudes(np.asarray(origin_x), dataset))
+
+            origin_elevation = _sample_elevation(
+                dataset,
+                origin_x,
+                origin_y,
+                wrap_longitude=wrap_longitude,
+            )
+
+            if origin_elevation is None:
+                raise TerrainDataUnavailable("Observer position has no valid DEM height")
+
+            geodesic = Geod(a=moon_radius_m, b=moon_radius_m)
+            observer_radius = moon_radius_m + origin_elevation + observer_height_m
+            azimuths = np.arange(ray_count, dtype=float) * azimuth_step_deg
+            profile = []
+
+            for azimuth in azimuths:
+                longitudes, latitudes, _ = geodesic.fwd(
+                    np.full(len(distances), norm_lon),
+                    np.full(len(distances), lat),
+                    np.full(len(distances), azimuth),
+                    distances,
+                )
+
+                xs, ys = projection.transform(
+                    longitudes,
+                    latitudes,
+                    errcheck=True,
+                )
+                xs_arr = np.asarray(xs)
+                if is_geographic:
+                    xs_arr = _align_geographic_longitudes(xs_arr, dataset)
+
+                elevations = _sample_ray_elevations(
+                    dataset,
+                    xs_arr,
+                    np.asarray(ys),
+                    wrap_longitude=wrap_longitude,
+                )
+
+                # Stop at the first missing pixel to preserve continuous coverage.
+                gaps = np.flatnonzero(~np.isfinite(elevations))
+                prefix_len = int(gaps[0]) if len(gaps) else len(distances)
+                covered_distances = distances[:prefix_len]
+
+                if prefix_len:
+                    central_angles = covered_distances / moon_radius_m
+                    target_radii = moon_radius_m + elevations[:prefix_len]
+
+                    angles = np.degrees(
+                        np.arctan2(
+                            target_radii * np.cos(central_angles) - observer_radius,
+                            target_radii * np.sin(central_angles),
+                        )
+                    )
+                    horizon_angle = float(angles.max())
+                else:
+                    horizon_angle = None
+
+                complete = prefix_len == len(distances)
+
+                profile.append(
+                    dict(
+                        azimuth_deg=float(azimuth),
+                        horizon_elevation_deg=horizon_angle if complete else None,
+                        partial_horizon_elevation_deg=(
+                            horizon_angle if not complete else None
+                        ),
+                        covered_distance_m=(
+                            float(covered_distances[-1]) if prefix_len else 0.0
+                        ),
+                    )
+                )
+
+            valid = sum(item["horizon_elevation_deg"] is not None for item in profile)
+
+            return dict(
+                latitude=lat,
+                longitude=lon,
+                profile=profile,
+                data_quality=(
+                    "complete_within_radius"
+                    if valid == ray_count
+                    else "insufficient_data"
+                ),
+                valid_azimuths=valid,
+                total_azimuths=ray_count,
+                metadata=dict(
+                    dem_source=raster_path.name,
+                    dem_resolution_m=res_m,
+                    moon_radius_m=moon_radius_m,
+                    observer_height_m=observer_height_m,
+                    max_distance_m=max_distance_m,
+                    distance_step_m=spacing,
+                    azimuth_step_deg=azimuth_step_deg,
+                    visibility_limit="Only tested within the configured radius",
+                ),
+            )
+
+    except (RasterioError, OSError, ProjError) as exc:
+        raise TerrainDataUnavailable("Could not read or project the lunar DEM") from exc
 
 
 def get_terrain_horizon(
@@ -164,22 +380,9 @@ def get_terrain_horizon(
 ) -> dict[str, Any]:
     """Calculate a sampled, terrain-aware horizon around a lunar observer.
 
-    Args:
-        lat: Selenographic latitude in degrees.
-        lon: East-positive selenographic longitude in degrees.
-        dem_path: Projected LOLA elevation GeoTIFF (defaults to ELEVATION_MAP).
-        observer_height_m: Instrument height above local terrain, in meters.
-        max_distance_m: Maximum terrain search distance along each azimuth.
-        azimuth_step_deg: Angular spacing; must divide 360 exactly.
-        distance_step_m: Ray sampling interval; defaults to DEM pixel size.
-
-    Returns:
-        Horizon profile with azimuths, angles, coverage status and metadata.
-        Missing pixels yield None for affected azimuths; no guessing occurs.
-
-    Raises:
-        ValueError: For invalid parameters.
-        TerrainDataUnavailable: If the elevation raster or observer is missing.
+    Uses the high-resolution regional DEM (ELEVATION_MAP) when it provides full
+    coverage, and automatically falls back to the global LDEM64_PA_eqc_m.tif
+    DEM for off-pole coordinates or incomplete edge coverage.
     """
     lat = _finite(lat, "lat")
     lon = _finite(lon, "lon")
@@ -201,164 +404,53 @@ def get_terrain_horizon(
     if not (1 <= count <= 3600 and isclose(count, round(count), abs_tol=1e-8)):
         raise ValueError("azimuth_step_deg must divide 360 with at most 3600 rays")
 
-    raster_path = Path(dem_path) if dem_path is not None else ELEVATION_MAP
+    if dem_path is not None:
+        return _compute_terrain_horizon(
+            lat,
+            lon,
+            raster_path=Path(dem_path),
+            observer_height_m=observer_height_m,
+            max_distance_m=max_distance_m,
+            azimuth_step_deg=azimuth_step_deg,
+            distance_step_m=distance_step_m,
+        )
 
-    if not raster_path.is_file():
-        raise TerrainDataUnavailable(f"LOLA elevation DEM is missing: {raster_path}")
+    candidates: list[Path] = [ELEVATION_MAP]
+    if GLOBAL_ELEVATION_MAP != ELEVATION_MAP and GLOBAL_ELEVATION_MAP.is_file():
+        candidates.append(GLOBAL_ELEVATION_MAP)
 
-    try:
-        with rasterio.open(raster_path) as dataset:
-            if dataset.count < 1 or dataset.crs is None or not dataset.crs.is_projected:
-                raise TerrainDataUnavailable("Expected a projected lunar elevation DEM")
+    best_result: dict[str, Any] | None = None
+    last_error: TerrainDataUnavailable | None = None
 
-            map_crs = CRS.from_wkt(dataset.crs.to_wkt())
-            unit_factor = map_crs.axis_info[0].unit_conversion_factor
-
-            if not isclose(unit_factor, 1.0, abs_tol=1e-9):
-                raise TerrainDataUnavailable("DEM projection units must be meters")
-
-            moon_radius_m = map_crs.ellipsoid.semi_major_metre
-
-            if not isfinite(moon_radius_m) or moon_radius_m <= 0:
-                raise TerrainDataUnavailable("DEM has no valid lunar reference radius")
-
-            if not isclose(map_crs.ellipsoid.semi_minor_metre, moon_radius_m, rel_tol=1e-9):
-                raise TerrainDataUnavailable("A spherical lunar DEM is required")
-
-            spacing = (
-                min(abs(dataset.res[0]), abs(dataset.res[1]))
-                if distance_step_m is None
-                else _finite(distance_step_m, "distance_step_m")
-            )
-
-            if spacing <= 0 or spacing > max_distance_m:
-                raise ValueError("distance_step_m must be in (0, max_distance_m]")
-
-            ray_count = int(round(count))
-
-            if ceil(max_distance_m / spacing) * ray_count > MAX_SAMPLES:
-                raise ValueError("Too many ray samples; increase distance/azimuth step")
-
-            distances = np.arange(spacing, max_distance_m, spacing)
-            distances = np.append(distances, max_distance_m)
-
-            projection = Transformer.from_crs(
-                map_crs.geodetic_crs, map_crs, always_xy=True
-            )
-
-            origin_x, origin_y = projection.transform(
-                0.0 if abs(lat) == 90 else (lon + 180) % 360 - 180,
+    for candidate in candidates:
+        try:
+            result = _compute_terrain_horizon(
                 lat,
-                errcheck=True,
+                lon,
+                raster_path=candidate,
+                observer_height_m=observer_height_m,
+                max_distance_m=max_distance_m,
+                azimuth_step_deg=azimuth_step_deg,
+                distance_step_m=distance_step_m,
             )
+        except TerrainDataUnavailable as exc:
+            last_error = exc
+            continue
 
-            origin_elevation = _sample_elevation(dataset, origin_x, origin_y)
+        if result["data_quality"] == "complete_within_radius":
+            return result
 
-            if origin_elevation is None:
-                raise TerrainDataUnavailable("Observer position has no valid DEM height")
+        if (
+            best_result is None
+            or result["valid_azimuths"] > best_result["valid_azimuths"]
+        ):
+            best_result = result
 
-            geodesic = Geod(a=moon_radius_m, b=moon_radius_m)
-            observer_radius = moon_radius_m + origin_elevation + observer_height_m
-            azimuths = np.arange(ray_count, dtype=float) * azimuth_step_deg
-            profile = []
+    if best_result is not None:
+        return best_result
 
-            
-            for azimuth in azimuths:
-                longitudes, latitudes, _ = geodesic.fwd(
-                    np.full(len(distances), lon),
-                    np.full(len(distances), lat),
-                    np.full(len(distances), azimuth),
-                    distances,
-                )
-
-                xs, ys = projection.transform(
-                    longitudes,
-                    latitudes,
-                    errcheck=True,
-                )
-
-                elevations = _sample_ray_elevations(
-                    dataset,
-                    np.asarray(xs),
-                    np.asarray(ys),
-                )
-
-                # Stop at the first missing pixel to preserve continuous coverage.
-                gaps = np.flatnonzero(~np.isfinite(elevations))
-
-                prefix_len = (
-                    int(gaps[0])
-                    if len(gaps)
-                    else len(distances)
-                )
-
-                covered_distances = distances[:prefix_len]
-
-                if prefix_len:
-                    central_angles = covered_distances / moon_radius_m
-
-                    target_radii = (
-                        moon_radius_m + elevations[:prefix_len]
-                    )
-
-                    angles = np.degrees(
-                        np.arctan2(
-                            target_radii * np.cos(central_angles)
-                            - observer_radius,
-                            target_radii * np.sin(central_angles),
-                        )
-                    )
-
-                    horizon_angle = float(angles.max())
-                else:
-                    horizon_angle = None
-
-                complete = prefix_len == len(distances)
-
-                profile.append(
-                    dict(
-                        azimuth_deg=float(azimuth),
-                        horizon_elevation_deg=(
-                            horizon_angle if complete else None
-                        ),
-                        partial_horizon_elevation_deg=(
-                            horizon_angle if not complete else None
-                        ),
-                        covered_distance_m=(
-                            float(covered_distances[-1])
-                            if prefix_len
-                            else 0.0
-                        ),
-                    )
-                )
-
-            valid = sum(item["horizon_elevation_deg"] is not None for item in profile)
-
-            return dict(
-                latitude=lat,
-                longitude=lon,
-                profile=profile,
-                data_quality=(
-                    "complete_within_radius"
-                    if valid == ray_count
-                    else "insufficient_data"
-                ),
-                valid_azimuths=valid,
-                total_azimuths=ray_count,
-                metadata=dict(
-                    dem_source=raster_path.name,
-                    dem_resolution_m=list(dataset.res),
-                    moon_radius_m=moon_radius_m,
-                    observer_height_m=observer_height_m,
-                    max_distance_m=max_distance_m,
-                    distance_step_m=spacing,
-                    azimuth_step_deg=azimuth_step_deg,
-                    visibility_limit="Only tested within the configured radius",
-                ),
-            )
-
-    except (RasterioError, OSError, ProjError) as exc:
-        raise TerrainDataUnavailable("Could not read or project the lunar DEM") from exc
+    assert last_error is not None
+    raise last_error
 
 
 def is_body_visible(
@@ -366,11 +458,7 @@ def is_body_visible(
     body_azimuth_deg: float,
     body_elevation_deg: float,
 ) -> bool | None:
-    """Accept a horizon and body's azimuth/elevation; return visibility or None.
-
-    Interpolates between neighboring azimuths, including the 360/0 boundary.
-    Returns None if either neighboring horizon sample lacks coverage.
-    """
+    """Accept a horizon and body's azimuth/elevation; return visibility or None."""
     azimuth = _finite(body_azimuth_deg, "body_azimuth_deg") % 360.0
     elevation = _finite(body_elevation_deg, "body_elevation_deg")
 
@@ -395,5 +483,4 @@ def is_body_visible(
         return elevation > first
 
     terrain_angle = first + (second - first) * fraction
-
     return elevation > terrain_angle
