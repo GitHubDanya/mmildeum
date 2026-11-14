@@ -79,7 +79,7 @@
         handler.setInputAction((movement: { position: any }) => {
             let cartesian: any = undefined;
 
-            // 1. Direct raycast against the Moon 3D tileset (bypasses depth buffer issues)
+            // Direct raycast against the Moon 3D tileset (bypasses depth buffer issues)
             const ray = viewer.camera.getPickRay(movement.position);
             if (ray && typeof viewer.scene.pickFromRay === 'function') {
                 const hit = viewer.scene.pickFromRay(ray);
@@ -88,7 +88,7 @@
                 }
             }
 
-            // 2. Fallback to depth-buffer pick, rejecting bogus far-plane readings (> 50km)
+            // Fallback to depth-buffer pick, rejecting bogus far-plane readings (> 50km)
             if (!Cesium.defined(cartesian)) {
                 const picked = viewer.scene.pickPosition(movement.position);
                 if (Cesium.defined(picked)) {
@@ -99,7 +99,7 @@
                 }
             }
 
-            // 3. Final fallback to the mathematical Moon ellipsoid
+            // Final fallback to the mathematical Moon ellipsoid
             if (!Cesium.defined(cartesian)) {
                 cartesian = viewer.camera.pickEllipsoid(movement.position, Cesium.Ellipsoid.MOON);
             }
