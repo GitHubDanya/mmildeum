@@ -1,6 +1,6 @@
 import re
 import requests
-from .terrain_horizon import get_terrain_horizon
+from .terrain_horizon import get_terrain_horizon, is_body_visible
 
 HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons.api"
 
@@ -47,11 +47,13 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict | None:
             continue
 
         last_timestamp = timestamp
-        is_visible = elevation > get_blocking_angle(azimuth, terrain_map)
+        visible = is_body_visible(horizon_data, azimuth, elevation)
+        if visible is None:
+            visible = elevation > get_blocking_angle(azimuth, terrain_map)
 
-        if is_visible and current_start is None:
+        if visible and current_start is None:
             current_start = timestamp
-        elif not is_visible and current_start is not None:
+        elif not visible and current_start is not None:
             visible_windows.append({
                 "start": current_start,
                 "end": timestamp,
