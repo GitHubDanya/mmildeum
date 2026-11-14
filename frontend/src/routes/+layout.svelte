@@ -2,8 +2,6 @@
 	import favicon from '#lib/assets/favicon.svg';
 	import type { LayoutProps } from './$types';
 
-    export const ssr = false;
-
 	let { children }: LayoutProps = $props();
 </script>
 
