@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, HTTPException, Query
-from .schemas import FetchDataResponse
+from .schemas import FetchDataResponse, SunlightDurationResponse
 from .services.sun_angle import get_average_sun_angle
 from .services.terrain import (
     TerrainDataUnavailable,
@@ -9,6 +9,11 @@ from .services.terrain import (
     get_terrain_elevation,
 )
 from .services.earth_visibility import get_earth_visibility_window
+from datetime import datetime
+from .services.sunlight_duration import (
+    SunlightDataUnavailable,
+    get_average_duration_of_sunlight,
+)
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -61,3 +66,50 @@ def fetch_data(
         ground_angle_deg=ground_angle_deg,
         lola_roughness_deg=lola_roughness_deg,
     )
+
+
+
+@router.get("/sunlight-duration", response_model=SunlightDurationResponse)
+def sunlight_duration(
+    lat: float = Query(ge=-90, le=90),
+    long: float = Query(ge=-180, le=360),
+    start: datetime = Query(description="UTC-aware start of the interval"),
+    end: datetime = Query(description="UTC-aware end of the interval"),
+    step_minutes: int = Query(default=60, ge=1, le=1440),
+) -> SunlightDurationResponse:
+    """Calculate sunlight duration for a selected lunar mission interval.
+
+    Args:
+        lat: Lunar latitude in degrees.
+        long: East-positive lunar longitude in degrees.
+        start: Start of the analysis interval with timezone.
+        end: End of the analysis interval with timezone.
+        step_minutes: Interval sampling step in minutes.
+
+    Returns:
+        Validated sunlight duration measurements.
+    """
+    try:
+        result = get_average_duration_of_sunlight(
+            lat,
+            long,
+            start,
+            end,
+            step_minutes=step_minutes,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    except (TerrainDataUnavailable, SunlightDataUnavailable) as exc:
+        logger.warning("Sunlight duration lookup failed: %s", exc)
+
+        raise HTTPException(
+            status_code=503,
+            detail="Required lunar illumination data is unavailable",
+        ) from exc
+
+    return SunlightDurationResponse(**result)
