@@ -2,6 +2,7 @@
     import type { SelectedSite } from './types';
     import {
         evaluateSiteAtTimestamp,
+        formatDurationHours,
         formatShortUtc,
         formatWindowRange,
         getScoreClass
@@ -11,14 +12,17 @@
     export let site: SelectedSite;
     export let totalSitesCount: number;
     export let selectedTimeMs: number;
+    export let missionDurationHours = 72;
     export let timelineStartMs: number;
     export let onBack: () => void;
     export let onFocus: (site: SelectedSite) => void;
     export let onCompareWith: ((site: SelectedSite) => void) | undefined = undefined;
     export let onRemove: (id: number) => void;
     export let onRetry: (site: SelectedSite) => void;
+    export let onRetrySunlightDuration: ((site: SelectedSite) => void) | undefined = undefined;
 
     $: dateEval = evaluateSiteAtTimestamp(site, selectedTimeMs);
+    $: missionEndMs = selectedTimeMs + missionDurationHours * 3600 * 1000;
 
     $: visibilityCursorIndex = (() => {
         if (!site.hasRealVisibility || site.visibilitySeries.length === 0) return null;
@@ -148,9 +152,58 @@
                 </header>
 
                 <div class="datapoints-stack">
+                    <!-- Mission Sunlight Duration Card (/sunlight-duration) -->
+                    <div class="datapoint-item mission-sun-card">
+                        <div class="dp-top-row">
+                            <span class="dp-label">
+                                Mission Sunlight ({formatDurationHours(missionDurationHours)})
+                            </span>
+                            {#if site.missionSunlight}
+                                <span class="sun-pct-chip">
+                                    {site.missionSunlight.sunlitPercentage.toFixed(1)}% Sunlit
+                                </span>
+                            {/if}
+                        </div>
+
+                        <span class="dp-interval-sub">
+                            {formatShortUtc(selectedTimeMs)} → {formatShortUtc(missionEndMs)} UTC
+                        </span>
+
+                        {#if site.loadingMissionSunlight}
+                            <span class="dp-value muted">Calculating sunlight duration...</span>
+                        {:else if site.missionSunlightError}
+                            <div class="sun-err-row">
+                                <span class="sun-err-text">{site.missionSunlightError}</span>
+                                {#if onRetrySunlightDuration}
+                                    <button
+                                            class="mini-retry-btn"
+                                            on:click={() => onRetrySunlightDuration && onRetrySunlightDuration(site)}
+                                    >
+                                        Retry
+                                    </button>
+                                {/if}
+                            </div>
+                        {:else if site.missionSunlight}
+                            <span class="dp-value sun-highlight">
+                                {site.missionSunlight.sunlitHours.toFixed(1)} hrs
+                                <small class="dp-sub">
+                                    of {site.missionSunlight.missionHours.toFixed(0)} hrs ({site.missionSunlight.stepMinutes}m step)
+                                </small>
+                            </span>
+                            <div class="sun-progress-track" aria-hidden="true">
+                                <div
+                                        class="sun-progress-fill"
+                                        style="width: {site.missionSunlight.sunlitPercentage}%;"
+                                ></div>
+                            </div>
+                        {:else}
+                            <span class="dp-value muted">Pending interval</span>
+                        {/if}
+                    </div>
+
                     <div class="datapoint-item date-eval-card">
                         <div class="dp-top-row">
-                            <span class="dp-label">On {formatShortUtc(selectedTimeMs)} UTC</span>
+                            <span class="dp-label">Touchdown ({formatShortUtc(selectedTimeMs)} UTC)</span>
                             <span class="status-chip {dateEval.status.toLowerCase()}">
                                 {dateEval.status}
                             </span>
@@ -339,7 +392,7 @@
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        gap: 0.5rem;
+        gap: 0.45rem;
         padding: 0.65rem;
         flex: 1;
     }
@@ -348,10 +401,79 @@
         background-color: rgba(7, 7, 7, 0.55);
         border: 1px solid rgba(234, 234, 234, 0.1);
         border-radius: 8px;
-        padding: 0.55rem 0.7rem;
+        padding: 0.5rem 0.68rem;
         display: flex;
         flex-direction: column;
         gap: 0.2rem;
+    }
+
+    .mission-sun-card {
+        border-color: rgba(250, 204, 21, 0.32);
+        background-color: rgba(250, 204, 21, 0.06);
+    }
+
+    .dp-interval-sub {
+        font-size: 0.68rem;
+        opacity: 0.7;
+    }
+
+    .sun-pct-chip {
+        font-size: 0.65rem;
+        font-weight: 600;
+        padding: 0.08rem 0.45rem;
+        border-radius: 999px;
+        background-color: rgba(250, 204, 21, 0.2);
+        color: #fde047;
+    }
+
+    .sun-highlight {
+        color: #fde047 !important;
+    }
+
+    .dp-sub {
+        font-size: 0.72rem;
+        font-weight: 400;
+        color: rgba(234, 234, 234, 0.7);
+        margin-left: 0.25rem;
+    }
+
+    .sun-progress-track {
+        width: 100%;
+        height: 5px;
+        border-radius: 999px;
+        background-color: rgba(234, 234, 234, 0.12);
+        overflow: hidden;
+        margin-top: 0.15rem;
+    }
+
+    .sun-progress-fill {
+        height: 100%;
+        background-color: #facc15;
+        border-radius: 999px;
+        transition: width 0.25s ease;
+    }
+
+    .sun-err-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.4rem;
+    }
+
+    .sun-err-text {
+        font-size: 0.72rem;
+        color: #fca5a5;
+    }
+
+    .mini-retry-btn {
+        background-color: rgba(234, 234, 234, 0.16);
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 0.15rem 0.45rem;
+        font-family: inherit;
+        font-size: 0.68rem;
+        cursor: pointer;
     }
 
     .date-eval-card {
@@ -400,6 +522,11 @@
         font-weight: 500;
         color: #fff;
         word-break: break-word;
+    }
+
+    .dp-value.muted {
+        font-size: 0.76rem;
+        opacity: 0.65;
     }
 
     .windows-list {

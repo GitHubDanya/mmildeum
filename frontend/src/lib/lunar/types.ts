@@ -3,6 +3,45 @@ export interface VisibilityWindow {
     end: string;
 }
 
+export interface SunlightDurationResponse {
+    sunlight_duration_hours?: number | null;
+    average_sunlight_duration_hours?: number | null;
+    avg_sunlight_duration_hours?: number | null;
+    total_sunlight_hours?: number | null;
+    sunlight_hours?: number | null;
+    duration_hours?: number | null;
+    sunlight_duration_minutes?: number | null;
+    sunlight_minutes?: number | null;
+    duration_minutes?: number | null;
+    sunlight_duration_seconds?: number | null;
+    sunlight_seconds?: number | null;
+    total_duration_hours?: number | null;
+    interval_hours?: number | null;
+    total_hours?: number | null;
+    sunlight_percentage?: number | null;
+    sunlit_percentage?: number | null;
+    sunlight_percent?: number | null;
+    sunlight_fraction?: number | null;
+    sunlit_fraction?: number | null;
+    sunlight_ratio?: number | null;
+    step_minutes?: number | null;
+    total_samples?: number | null;
+    sample_count?: number | null;
+    sunlit_samples?: number | null;
+    sunlight_samples?: number | null;
+}
+
+export interface MissionSunlightMetrics {
+    startIso: string;
+    endIso: string;
+    missionHours: number;
+    sunlitHours: number;
+    sunlitPercentage: number;
+    stepMinutes: number;
+    sampleCount: number | null;
+    sunlitSampleCount: number | null;
+}
+
 export interface FetchDataResponse {
     daytime_avg_sun_angle: number | null;
     terrain_elevation_m: number | null;
@@ -49,6 +88,18 @@ export interface SelectedSite {
     isEstimatedSunSeries: boolean;
     loadingScore: boolean;
     scoreError: boolean;
+    missionSunlight: MissionSunlightMetrics | null;
+    loadingMissionSunlight: boolean;
+    missionSunlightError: string | null;
+}
+
+export interface EarthEphemeris {
+    subEarthLatDeg: number;
+    subEarthLonDeg: number;
+    distanceKm: number;
+    distanceM: number;
+    sunLonDeg: number;
+    sunLatDeg: number;
 }
 
 export interface DateEvaluation {
@@ -67,15 +118,6 @@ export interface RecommendedDateWindow {
     label: string;
     avgScore: number;
     isJointOverlap: boolean;
-}
-
-export interface EarthEphemeris {
-    subEarthLatDeg: number;
-    subEarthLonDeg: number;
-    distanceKm: number;
-    distanceM: number;
-    sunLonDeg: number;
-    sunLatDeg: number;
 }
 
 export interface SparkChartConfig {
