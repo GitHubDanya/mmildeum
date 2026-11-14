@@ -413,3 +413,88 @@ def test_sunlight_api_rejects_naive_dates() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_reject_timezone_without_utc_offset() -> None:
+    """Take no arguments; reject an invalid timezone; return None."""
+    from datetime import tzinfo
+
+    class NoOffsetTimezone(tzinfo):
+        """Represent a timezone without a known UTC offset."""
+
+        def utcoffset(self, dt: datetime) -> None:
+            """Accept a datetime and return no UTC offset."""
+            return None
+
+        def dst(self, dt: datetime) -> None:
+            """Accept a datetime and return no daylight saving offset."""
+            return None
+
+    invalid_start = START.replace(tzinfo=NoOffsetTimezone())
+
+    with pytest.raises(ValueError, match="timezone"):
+        sunlight.get_average_duration_of_sunlight(
+            -85,
+            30,
+            invalid_start,
+            START + timedelta(hours=2),
+            horizon_data=horizon(),
+        )
+
+
+def test_horizons_explicit_error_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accept monkeypatch; reject an API error in HTTP 200; return None."""
+    reply = Mock()
+    reply.json.return_value = {
+        "error": "Observer location is invalid"
+    }
+
+    monkeypatch.setattr(
+        sunlight.requests,
+        "get",
+        Mock(return_value=reply),
+    )
+
+    with pytest.raises(
+        sunlight.SunlightDataUnavailable,
+        match="rejected",
+    ):
+        sunlight.get_average_duration_of_sunlight(
+            -85,
+            30,
+            START,
+            START + timedelta(hours=1),
+            horizon_data=horizon(),
+        )
+
+
+def test_reject_wrong_horizons_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accept monkeypatch; reject mismatched ephemeris time; return None."""
+    raw = (
+        "header\n"
+        "$$SOE\n"
+        "2450000.5, , , 90.0, 5.0,\n"
+        "$$EOE\n"
+    )
+
+    monkeypatch.setattr(
+        sunlight.requests,
+        "get",
+        Mock(return_value=FakeResponse(raw)),
+    )
+
+    with pytest.raises(
+        sunlight.SunlightDataUnavailable,
+        match="Inconsistent",
+    ):
+        sunlight.get_average_duration_of_sunlight(
+            -85,
+            30,
+            START,
+            START + timedelta(hours=1),
+            horizon_data=horizon(),
+        )
