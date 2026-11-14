@@ -78,6 +78,8 @@ Backend-derived quantities & Terrain horizon $H_p(a)$, lit and Earth-visible int
 
 The \emph{absolute} elevation of the site and the geological label are not separate scoring bonuses: altitude alone does not imply a safer site, and a broad geological class is not a measured hazard indicator.
 
+The global LOLA roughness map \texttt{MAS\_225M\_16} (Rosenburg et al., 2011) reports the median absolute along-track slope at a 225\,m baseline, in degrees. The app displays it as a site descriptor in place of the former south-polar roughness classes and the DEM-based roughness estimate. The terrain term in the score and the mission slope limit both use the 95th-percentile slope within the selected landing footprint. \href{https://pgda.gsfc.nasa.gov/products/70}{NASA PGDA product documentation.}
+
 \subsection{Visibility over time}
 Let $H_p(a)$ denote the local terrain horizon angle at azimuth $a$, calculated from the DEM (including the observer height and lunar curvature). Define:
 \begin{align}

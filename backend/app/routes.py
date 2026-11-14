@@ -1,13 +1,12 @@
 import logging
 from fastapi import APIRouter, HTTPException, Query
-from .schemas import FetchDataResponse, TerrainRoughnessMetadata
+from .schemas import FetchDataResponse
 from .services.sun_angle import get_average_sun_angle
 from .services.terrain import (
     TerrainDataUnavailable,
     get_ground_angle,
+    get_lola_roughness_deg,
     get_terrain_elevation,
-    get_terrain_roughness,
-    get_terrain_type,
 )
 
 router = APIRouter(prefix="/api")
@@ -23,12 +22,11 @@ def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in 
     :type long: float
     :param time: Time for time-dependent site data (currently unused)
     :type time: str | None
-    :return: Site data with the published NASA class and a DEM-based roughness estimate when available
+    :return: Site data with the published global LOLA roughness when available
     :rtype: FetchDataResponse
     """
     try:
-        class_id = get_terrain_type(lat, long)
-        roughness = get_terrain_roughness(lat, long)
+        lola_roughness_deg = get_lola_roughness_deg(lat, long)
         sun_data = get_average_sun_angle(lat, long)
         elevation_m = get_terrain_elevation(lat, long)
         ground_angle_deg = get_ground_angle(lat, long)
@@ -36,14 +34,8 @@ def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in 
         logger.exception("[routes.py] Terrain lookup failed!")
         raise HTTPException(status_code=503, detail="Lunar terrain data is unavailable!") from e
     return FetchDataResponse(
-        terrain_type=f"LOLA roughness class {class_id}" if class_id is not None else None,
-        terrain_class_id=class_id,
         daytime_avg_sun_angle=sun_data["avg_daytime_sun_angle"] if sun_data else None,
         terrain_elevation_m=elevation_m,
         ground_angle_deg=ground_angle_deg,
-        terrain_roughness_m=roughness.value_m if roughness is not None else None,
-        terrain_roughness_metadata=(
-            TerrainRoughnessMetadata.model_validate(roughness, from_attributes=True)
-            if roughness is not None else None
-        ),
+        lola_roughness_deg=lola_roughness_deg,
     )
