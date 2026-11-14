@@ -17,3 +17,6 @@ EOF
 /backend/data/LDSM_80S_80MPP_ADJ.TIF
 /backend/data/LDEM64_PA_pixel_202405.tif
 /backend/data/*.part
+
+# Global LOLA roughness grid
+/backend/data/MAS_225M_16.IMG
