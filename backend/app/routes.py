@@ -2,7 +2,13 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from .schemas import FetchDataResponse
 from .services.sun_angle import get_average_sun_angle
-from .services.terrain import (TerrainDataUnavailable, get_terrain_elevation, get_terrain_type,)
+from .services.terrain import (
+    TerrainDataUnavailable,
+    get_ground_angle,
+    get_terrain_elevation,
+    get_terrain_roughness,
+    get_terrain_type,
+)
 from .services.earth_visibility import get_earth_visibility_window
 
 router = APIRouter(prefix="/api")
@@ -27,6 +33,7 @@ def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in 
         roughness = get_terrain_roughness(lat, long)
         sun_data = get_average_sun_angle(lat, long)
         elevation_m = get_terrain_elevation(lat, long)
+        visibility_wins = get_earth_visibility_window(lat, long)
         ground_angle_deg = get_ground_angle(lat, long)
         visibility_wins = get_earth_visibility_window(lat, long)
     except TerrainDataUnavailable as e:
@@ -38,6 +45,7 @@ def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in 
         daytime_avg_sun_angle=sun_data["avg_daytime_sun_angle"] if sun_data else None,
         visibility_windows=visibility_wins["windows"] if visibility_wins else None,
         terrain_elevation_m=elevation_m,
+        visibility_windows=visibility_wins["windows"] if visibility_wins else None,
         ground_angle_deg=ground_angle_deg,
         terrain_roughness_m=roughness.value_m if roughness is not None else None,
         terrain_roughness_metadata=(
