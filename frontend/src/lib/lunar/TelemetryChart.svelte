@@ -31,6 +31,11 @@
     export let stepped = false;
     export let summaryText = '';
 
+    export let primaryLabel = 'Site A';
+    export let compareData: number[] | undefined = undefined;
+    export let compareColor = '#38bdf8';
+    export let compareLabel = 'Site B';
+
     function hexToRgba(hex: string, alpha: number): string {
         const clean = hex.replace('#', '');
         const bigint = parseInt(clean, 16);
@@ -40,34 +45,72 @@
         return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
-    function minimalChart(node: HTMLCanvasElement, config: SparkChartConfig) {
-        const buildDataset = (cfg: SparkChartConfig) => ({
-            data: cfg.data,
-            borderColor: cfg.color,
-            borderWidth: 1.75,
-            pointRadius: 0,
-            pointHoverRadius: 3.5,
-            pointHoverBackgroundColor: cfg.color,
-            pointHoverBorderColor: '#070707',
-            pointHoverBorderWidth: 1.5,
-            tension: cfg.stepped ? 0 : 0.35,
-            stepped: cfg.stepped ? ('middle' as const) : false,
-            fill: true,
+    function buildSingleDataset(
+        seriesData: number[],
+        seriesColor: string,
+        label: string,
+        isStepped: boolean,
+        fillAlpha: number
+    ) {
+        return {
+            label,
+            data: seriesData,
+            borderColor: seriesColor,
             backgroundColor: (context: any) => {
                 const { ctx, chartArea } = context.chart;
                 if (!chartArea) return 'transparent';
                 const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-                gradient.addColorStop(0, hexToRgba(cfg.color, 0.22));
-                gradient.addColorStop(1, hexToRgba(cfg.color, 0.0));
+                gradient.addColorStop(0, hexToRgba(seriesColor, fillAlpha));
+                gradient.addColorStop(1, hexToRgba(seriesColor, 0.0));
                 return gradient;
-            }
-        });
+            },
+            borderWidth: 1.75,
+            pointRadius: 0,
+            pointHoverRadius: 3.5,
+            pointHoverBackgroundColor: seriesColor,
+            pointHoverBorderColor: '#070707',
+            pointHoverBorderWidth: 1.5,
+            tension: isStepped ? 0 : 0.35,
+            stepped: isStepped ? ('middle' as const) : false,
+            fill: true
+        };
+    }
 
+    function buildDatasets(cfg: SparkChartConfig) {
+        const isComparing = Array.isArray(cfg.compareData);
+        const alpha = isComparing ? 0.08 : 0.22;
+
+        const datasets = [
+            buildSingleDataset(
+                cfg.data,
+                cfg.color,
+                cfg.primaryLabel ?? 'Site A',
+                Boolean(cfg.stepped),
+                alpha
+            )
+        ];
+
+        if (isComparing && cfg.compareData) {
+            datasets.push(
+                buildSingleDataset(
+                    cfg.compareData,
+                    cfg.compareColor ?? '#38bdf8',
+                    cfg.compareLabel ?? 'Site B',
+                    Boolean(cfg.stepped),
+                    alpha
+                )
+            );
+        }
+
+        return datasets;
+    }
+
+    function minimalChart(node: HTMLCanvasElement, config: SparkChartConfig) {
         const chart = new Chart(node, {
             type: 'line',
             data: {
                 labels: HOURS_LABELS,
-                datasets: [buildDataset(config)]
+                datasets: buildDatasets(config) as any
             },
             options: {
                 responsive: true,
@@ -84,12 +127,19 @@
                         borderColor: 'rgba(234, 234, 234, 0.2)',
                         borderWidth: 1,
                         padding: 8,
-                        displayColors: false,
+                        displayColors: Array.isArray(config.compareData),
+                        boxWidth: 8,
+                        boxHeight: 8,
                         titleFont: { family: 'Rubik, sans-serif', size: 10, weight: 400 },
-                        bodyFont: { family: 'Rubik, sans-serif', size: 12, weight: 600 },
+                        bodyFont: { family: 'Rubik, sans-serif', size: 11, weight: 600 },
                         callbacks: {
                             title: (items) => `${items[0]?.label ?? ''} UTC`,
-                            label: (item) => `${Number(item.raw).toFixed(1)}${config.unit}`
+                            label: (item) => {
+                                const prefix = Array.isArray(config.compareData)
+                                    ? `${item.dataset.label}: `
+                                    : '';
+                                return `${prefix}${Number(item.raw).toFixed(1)}${config.unit}`;
+                            }
                         }
                     }
                 },
@@ -124,7 +174,12 @@
 
         return {
             update(newConfig: SparkChartConfig) {
-                chart.data.datasets[0] = buildDataset(newConfig) as any;
+                chart.data.datasets = buildDatasets(newConfig) as any;
+                if (chart.options.plugins?.tooltip) {
+                    chart.options.plugins.tooltip.displayColors = Array.isArray(
+                        newConfig.compareData
+                    );
+                }
                 if (chart.options.scales?.y) {
                     chart.options.scales.y.min = newConfig.min;
                     chart.options.scales.y.max = newConfig.max;
@@ -141,12 +196,36 @@
 <div class="graph-card">
     <div class="graph-meta">
         <span class="graph-title">{title}</span>
-        {#if summaryText}
+        {#if Array.isArray(compareData)}
+            <div class="compare-legend">
+                <span class="legend-item">
+                    <i class="legend-dot" style="background: {color};"></i>
+                    {primaryLabel}
+                </span>
+                <span class="legend-item">
+                    <i class="legend-dot" style="background: {compareColor};"></i>
+                    {compareLabel}
+                </span>
+            </div>
+        {:else if summaryText}
             <span class="graph-latest" style="color: {color};">{summaryText}</span>
         {/if}
     </div>
     <div class="canvas-wrap">
-        <canvas use:minimalChart={{ data, color, unit, min, max, stepped }}></canvas>
+        <canvas
+                use:minimalChart={{
+                data,
+                color,
+                unit,
+                min,
+                max,
+                stepped,
+                primaryLabel,
+                compareData,
+                compareColor,
+                compareLabel
+            }}
+        ></canvas>
     </div>
 </div>
 
@@ -177,6 +256,27 @@
         font-size: 0.7rem;
         font-weight: 500;
         opacity: 0.85;
+    }
+
+    .compare-legend {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        font-size: 0.68rem;
+        color: rgba(234, 234, 234, 0.8);
+    }
+
+    .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+    }
+
+    .legend-dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
     }
 
     .canvas-wrap {

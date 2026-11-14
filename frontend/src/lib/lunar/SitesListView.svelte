@@ -4,25 +4,86 @@
 
     export let sites: SelectedSite[] = [];
     export let onSelect: (site: SelectedSite) => void;
+    export let onCompare: (siteIds: [number, number]) => void;
     export let onRemove: (id: number) => void;
     export let onClearAll: () => void;
+
+    let compareMode = false;
+    let pickedIds: number[] = [];
+
+    $: if (sites.length < 2 && compareMode) {
+        compareMode = false;
+        pickedIds = [];
+    }
+
+    $: pickedIds = pickedIds.filter((id) => sites.some((s) => s.id === id));
+
+    function toggleCompareMode() {
+        compareMode = !compareMode;
+        pickedIds = [];
+    }
+
+    function handleCardClick(site: SelectedSite) {
+        if (!compareMode) {
+            onSelect(site);
+            return;
+        }
+
+        if (pickedIds.includes(site.id)) {
+            pickedIds = pickedIds.filter((id) => id !== site.id);
+        } else if (pickedIds.length === 0) {
+            pickedIds = [site.id];
+        } else {
+            const pair: [number, number] = [pickedIds[0], site.id];
+            compareMode = false;
+            pickedIds = [];
+            onCompare(pair);
+        }
+    }
 </script>
 
 <div class="sites-panel">
     <div class="sites-header">
-        <span>Selected Sites ({sites.length})</span>
-        <button class="btn btn-white" on:click={onClearAll}>Clear All</button>
+        <span>
+            {#if compareMode}
+                Select 2 sites ({pickedIds.length}/2)
+            {:else}
+                Selected Sites ({sites.length})
+            {/if}
+        </span>
+
+        <div class="header-actions">
+            {#if sites.length >= 2}
+                <button
+                        class="btn {compareMode ? 'btn-active' : 'btn-outline'}"
+                        on:click={toggleCompareMode}
+                >
+                    {compareMode ? 'Cancel' : 'Compare'}
+                </button>
+            {/if}
+            <button class="btn btn-white" on:click={onClearAll}>Clear All</button>
+        </div>
     </div>
 
     <div class="sites-list">
         {#each sites as site (site.id)}
-            <div class="site-card">
+            {@const pickIndex = pickedIds.indexOf(site.id)}
+            <div class="site-card" class:picked={pickIndex !== -1}>
                 <button
                         class="site-info"
-                        on:click={() => onSelect(site)}
-                        title="View details for {site.name}"
+                        on:click={() => handleCardClick(site)}
+                        title={compareMode
+                        ? `Select ${site.name} for comparison`
+                        : `View details for ${site.name}`}
                 >
-                    <strong>{site.name}</strong>
+                    <div class="site-title-line">
+                        {#if compareMode}
+                            <span class="pick-indicator" class:checked={pickIndex !== -1}>
+                                {pickIndex === 0 ? 'A' : pickIndex === 1 ? 'B' : ''}
+                            </span>
+                        {/if}
+                        <strong>{site.name}</strong>
+                    </div>
                     <span>Lat: {site.lat}° | Lon: {site.lon}° | Alt: {site.alt}m</span>
                     {#if site.terrainType}
                         <span class="terrain-tag">{site.terrainType}</span>
@@ -76,6 +137,23 @@
         border-bottom: 1px solid rgba(234, 234, 234, 0.15);
     }
 
+    .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+
+    .btn-outline {
+        background-color: transparent;
+        color: #eaeaea;
+        border: 1px solid rgba(234, 234, 234, 0.35);
+    }
+
+    .btn-active {
+        background-color: #facc15;
+        color: #070707;
+    }
+
     .sites-list {
         display: flex;
         flex-direction: column;
@@ -93,11 +171,16 @@
         border: 1px solid rgba(234, 234, 234, 0.12);
         border-radius: 10px;
         padding: 0.6rem 0.75rem;
-        transition: background-color 0.15s ease;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
     }
 
     .site-card:hover {
         background-color: rgba(234, 234, 234, 0.14);
+    }
+
+    .site-card.picked {
+        border-color: #facc15;
+        background-color: rgba(250, 204, 21, 0.1);
     }
 
     .site-info {
@@ -112,6 +195,30 @@
         gap: 0.2rem;
         padding: 0;
         flex: 1;
+    }
+
+    .site-title-line {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+    }
+
+    .pick-indicator {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1px solid rgba(234, 234, 234, 0.4);
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: #070707;
+    }
+
+    .pick-indicator.checked {
+        background-color: #facc15;
+        border-color: #facc15;
     }
 
     .site-info strong {

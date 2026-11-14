@@ -5,18 +5,34 @@
     import LunarGlobe from '#lib/lunar/LunarGlobe.svelte';
     import SitesListView from '#lib/lunar/SitesListView.svelte';
     import SiteDetailView from '#lib/lunar/SiteDetailView.svelte';
+    import SiteCompareView from '#lib/lunar/SiteCompareView.svelte';
 
     let globe: LunarGlobe;
     let selectedSites: SelectedSite[] = [];
     let activeSiteId: number | null = null;
+    let comparePairIds: [number, number] | null = null;
     let nextSiteId = 1;
     let viewportWidth = 1440;
 
     $: activeSite = selectedSites.find((s) => s.id === activeSiteId) ?? null;
 
-    // Solid covered width on the right (total menu width minus the 8vw transparent fade)
-    $: menuWidthPx = activeSite
-        ? Math.min(viewportWidth * 0.65, 1000)
+    $: compareSites = (() => {
+        if (!comparePairIds) return null;
+        const a = selectedSites.find((s) => s.id === comparePairIds![0]);
+        const b = selectedSites.find((s) => s.id === comparePairIds![1]);
+        return a && b ? ([a, b] as [SelectedSite, SelectedSite]) : null;
+    })();
+
+    $: isExpanded = Boolean(activeSite || compareSites);
+
+    $: highlightedSiteIds = compareSites
+        ? [compareSites[0].id, compareSites[1].id]
+        : activeSite
+            ? [activeSite.id]
+            : [];
+
+    $: menuWidthPx = isExpanded
+        ? Math.min(viewportWidth * 0.65, 1040)
         : viewportWidth * 0.4;
     $: rightInsetPx = Math.max(0, menuWidthPx - viewportWidth * 0.08);
 
@@ -74,23 +90,48 @@
     }
 
     function handleSelectSite(site: SelectedSite) {
+        comparePairIds = null;
         activeSiteId = site.id;
         globe?.flyToSite(site);
     }
 
     function handleSelectSiteById(siteId: number) {
         const found = selectedSites.find((s) => s.id === siteId);
-        if (found) handleSelectSite(found);
+        if (!found) return;
+
+        // If already comparing these two sites, clicking a pin flies to it without closing compare view
+        if (comparePairIds && comparePairIds.includes(siteId)) {
+            globe?.flyToSite(found);
+            return;
+        }
+
+        handleSelectSite(found);
+    }
+
+    function handleStartCompare(pair: [number, number]) {
+        activeSiteId = null;
+        comparePairIds = pair;
+    }
+
+    function handleCompareFromDetail(site: SelectedSite) {
+        const other = selectedSites.find((s) => s.id !== site.id);
+        if (!other) return;
+        activeSiteId = null;
+        comparePairIds = [site.id, other.id];
     }
 
     function handleRemoveSite(id: number) {
         if (activeSiteId === id) activeSiteId = null;
+        if (comparePairIds && comparePairIds.includes(id)) {
+            comparePairIds = null;
+        }
         selectedSites = selectedSites.filter((s) => s.id !== id);
     }
 
     function handleClearAll() {
         selectedSites = [];
         activeSiteId = null;
+        comparePairIds = null;
         nextSiteId = 1;
     }
 </script>
@@ -100,21 +141,32 @@
 <LunarGlobe
         bind:this={globe}
         sites={selectedSites}
-        {activeSiteId}
+        {highlightedSiteIds}
         {rightInsetPx}
         onAddSite={handleAddSite}
         onSelectSite={handleSelectSiteById}
 />
 
-<div class="menu" class:expanded={Boolean(activeSite)}>
+<div class="menu" class:expanded={isExpanded}>
     <h1 style="margin-top: 6vh;">Lunar Landing Site Navigator</h1>
 
-    {#if activeSite}
+    {#if compareSites}
+        <SiteCompareView
+                siteA={compareSites[0]}
+                siteB={compareSites[1]}
+                allSites={selectedSites}
+                onChangePair={(pair) => (comparePairIds = pair)}
+                onBack={() => (comparePairIds = null)}
+                onFocus={(site) => globe?.flyToSite(site)}
+                onRetry={loadTelemetry}
+        />
+    {:else if activeSite}
         <SiteDetailView
                 site={activeSite}
                 totalSitesCount={selectedSites.length}
                 onBack={() => (activeSiteId = null)}
                 onFocus={(site) => globe?.flyToSite(site)}
+                onCompareWith={handleCompareFromDetail}
                 onRemove={handleRemoveSite}
                 onRetry={loadTelemetry}
         />
@@ -122,6 +174,7 @@
         <SitesListView
                 sites={selectedSites}
                 onSelect={handleSelectSite}
+                onCompare={handleStartCompare}
                 onRemove={handleRemoveSite}
                 onClearAll={handleClearAll}
         />
@@ -175,7 +228,7 @@
 
     .menu.expanded {
         width: 65vw;
-        max-width: 1000px;
+        max-width: 1040px;
         padding-left: 14vw;
     }
 

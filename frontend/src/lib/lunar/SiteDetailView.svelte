@@ -7,6 +7,7 @@
     export let totalSitesCount: number;
     export let onBack: () => void;
     export let onFocus: (site: SelectedSite) => void;
+    export let onCompareWith: ((site: SelectedSite) => void) | undefined = undefined;
     export let onRemove: (id: number) => void;
     export let onRetry: (site: SelectedSite) => void;
 </script>
@@ -34,6 +35,16 @@
                 >
                     {site.score.toFixed(1)}
                 </span>
+            {/if}
+
+            {#if totalSitesCount >= 2 && onCompareWith}
+                <button
+                        class="btn btn-outline"
+                        on:click={() => onCompareWith && onCompareWith(site)}
+                        title="Compare {site.name} with another site"
+                >
+                    Compare
+                </button>
             {/if}
 
             <button
@@ -199,6 +210,12 @@
         display: flex;
         align-items: center;
         gap: 0.4rem;
+    }
+
+    .btn-outline {
+        background-color: transparent;
+        color: #eaeaea;
+        border: 1px solid rgba(234, 234, 234, 0.35);
     }
 
     .back-btn {

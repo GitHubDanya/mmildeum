@@ -4,7 +4,7 @@
     import { getScoreHexColor } from './telemetry';
 
     export let sites: SelectedSite[] = [];
-    export let activeSiteId: number | null = null;
+    export let highlightedSiteIds: number[] = [];
     export let rightInsetPx = 0;
     export let onAddSite: (coords: { lat: number; lon: number; alt: number }) => void;
     export let onSelectSite: (siteId: number) => void;
@@ -32,6 +32,7 @@
 
     $: if (Cesium && pointsCollection && labelsCollection && sites) {
         const currentIds = new Set(sites.map((s) => s.id));
+        const highlightedSet = new Set(highlightedSiteIds);
 
         for (const [id, prims] of primitivesBySiteId.entries()) {
             if (!currentIds.has(id)) {
@@ -80,9 +81,9 @@
                 primitivesBySiteId.set(site.id, prims);
             }
 
-            const isSelected = site.id === activeSiteId;
-            prims.point.pixelSize = isSelected ? 16 : 12;
-            prims.point.outlineWidth = isSelected ? 3 : 2;
+            const isHighlighted = highlightedSet.has(site.id);
+            prims.point.pixelSize = isHighlighted ? 16 : 12;
+            prims.point.outlineWidth = isHighlighted ? 3 : 2;
 
             if (site.score !== null) {
                 prims.point.color = Cesium.Color.fromCssColorString(getScoreHexColor(site.score));
@@ -186,10 +187,7 @@
     });
 </script>
 
-<div
-        id="cesiumContainer"
-        style="transform: translateX({-rightInsetPx / 2}px);"
-></div>
+<div id="cesiumContainer" style="transform: translateX({-rightInsetPx / 2}px);"></div>
 
 <style>
     #cesiumContainer {

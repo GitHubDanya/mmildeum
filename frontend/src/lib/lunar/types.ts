@@ -46,4 +46,8 @@ export interface SparkChartConfig {
     min: number;
     max: number;
     stepped?: boolean;
+    primaryLabel?: string;
+    compareData?: number[];
+    compareColor?: string;
+    compareLabel?: string;
 }
