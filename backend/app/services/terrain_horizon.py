@@ -43,14 +43,27 @@ def _finite(value: object, name: str) -> float:
     return number
 
 
-def _is_global_longitude_raster(dataset: Any, moon_radius_m: float) -> bool:
+def _is_global_longitude_raster(
+    dataset: Any,
+    moon_radius_m: float,
+    *,
+    is_geographic: bool = False,
+) -> bool:
     """Return True if the raster spans 360 degrees of lunar longitude."""
     if dataset.transform.b != 0 or dataset.transform.d != 0:
         return False
 
-    width_m = abs(dataset.bounds.right - dataset.bounds.left)
-    circumference_m = 2.0 * pi * moon_radius_m
-    return isclose(width_m, circumference_m, rel_tol=1e-4)
+    width = abs(dataset.bounds.right - dataset.bounds.left)
+    full_circle = 360.0 if is_geographic else 2.0 * pi * moon_radius_m
+
+    return isclose(width, full_circle, rel_tol=1e-4)
+
+
+def _align_geographic_longitudes(xs: np.ndarray, dataset: Any) -> np.ndarray:
+    """Align [-180, 180] longitudes to [0, 360) if the raster uses 0..360 bounds."""
+    if dataset.bounds.left >= 0.0 and dataset.bounds.right > 180.0:
+        return np.mod(xs, 360.0)
+    return xs
 
 
 def _sample_elevation(
@@ -60,7 +73,7 @@ def _sample_elevation(
     *,
     wrap_longitude: bool = False,
 ) -> float | None:
-    """Read terrain elevation from a projected DEM coordinate."""
+    """Read terrain elevation from a projected or geographic DEM coordinate."""
     row, col = dataset.index(x, y)
 
     if row == dataset.height and isclose(y, dataset.bounds.bottom, abs_tol=1e-3):
@@ -182,14 +195,29 @@ def _compute_terrain_horizon(
 
     try:
         with rasterio.open(raster_path) as dataset:
-            if dataset.count < 1 or dataset.crs is None or not dataset.crs.is_projected:
-                raise TerrainDataUnavailable("Expected a projected lunar elevation DEM")
+            if dataset.count < 1 or dataset.crs is None:
+                raise TerrainDataUnavailable("Expected a lunar elevation DEM with a valid CRS")
 
             map_crs = CRS.from_wkt(dataset.crs.to_wkt())
-            unit_factor = map_crs.axis_info[0].unit_conversion_factor
+            if not map_crs.axis_info:
+                raise TerrainDataUnavailable("DEM CRS has no axis unit metadata")
 
-            if not isclose(unit_factor, 1.0, abs_tol=1e-9):
-                raise TerrainDataUnavailable("DEM projection units must be meters")
+            unit_factor = map_crs.axis_info[0].unit_conversion_factor
+            is_geographic = map_crs.is_geographic
+
+            if map_crs.is_projected:
+                if not isclose(unit_factor, 1.0, abs_tol=1e-9):
+                    raise TerrainDataUnavailable("Projected DEM units must be meters")
+            elif is_geographic:
+                if not isclose(unit_factor, pi / 180.0, rel_tol=1e-6):
+                    raise TerrainDataUnavailable("Geographic DEM units must be degrees")
+            else:
+                raise TerrainDataUnavailable(
+                    "Expected a projected or geographic lunar elevation DEM"
+                )
+
+            if map_crs.ellipsoid is None:
+                raise TerrainDataUnavailable("DEM has no valid lunar reference ellipsoid")
 
             moon_radius_m = map_crs.ellipsoid.semi_major_metre
 
@@ -201,8 +229,11 @@ def _compute_terrain_horizon(
             ):
                 raise TerrainDataUnavailable("A spherical lunar DEM is required")
 
+            res_scale_m = unit_factor * moon_radius_m if is_geographic else 1.0
+            res_m = [abs(dataset.res[0]) * res_scale_m, abs(dataset.res[1]) * res_scale_m]
+
             spacing = (
-                min(abs(dataset.res[0]), abs(dataset.res[1]))
+                min(res_m)
                 if distance_step_m is None
                 else _finite(distance_step_m, "distance_step_m")
             )
@@ -213,7 +244,11 @@ def _compute_terrain_horizon(
             if ceil(max_distance_m / spacing) * ray_count > MAX_SAMPLES:
                 raise ValueError("Too many ray samples; increase distance/azimuth step")
 
-            wrap_longitude = _is_global_longitude_raster(dataset, moon_radius_m)
+            wrap_longitude = _is_global_longitude_raster(
+                dataset,
+                moon_radius_m,
+                is_geographic=is_geographic,
+            )
 
             distances = np.arange(spacing, max_distance_m, spacing)
             distances = np.append(distances, max_distance_m)
@@ -228,6 +263,8 @@ def _compute_terrain_horizon(
                 lat,
                 errcheck=True,
             )
+            if is_geographic:
+                origin_x = float(_align_geographic_longitudes(np.asarray(origin_x), dataset))
 
             origin_elevation = _sample_elevation(
                 dataset,
@@ -246,7 +283,7 @@ def _compute_terrain_horizon(
 
             for azimuth in azimuths:
                 longitudes, latitudes, _ = geodesic.fwd(
-                    np.full(len(distances), lon),
+                    np.full(len(distances), norm_lon),
                     np.full(len(distances), lat),
                     np.full(len(distances), azimuth),
                     distances,
@@ -257,10 +294,13 @@ def _compute_terrain_horizon(
                     latitudes,
                     errcheck=True,
                 )
+                xs_arr = np.asarray(xs)
+                if is_geographic:
+                    xs_arr = _align_geographic_longitudes(xs_arr, dataset)
 
                 elevations = _sample_ray_elevations(
                     dataset,
-                    np.asarray(xs),
+                    xs_arr,
                     np.asarray(ys),
                     wrap_longitude=wrap_longitude,
                 )
@@ -314,7 +354,7 @@ def _compute_terrain_horizon(
                 total_azimuths=ray_count,
                 metadata=dict(
                     dem_source=raster_path.name,
-                    dem_resolution_m=list(dataset.res),
+                    dem_resolution_m=res_m,
                     moon_radius_m=moon_radius_m,
                     observer_height_m=observer_height_m,
                     max_distance_m=max_distance_m,
