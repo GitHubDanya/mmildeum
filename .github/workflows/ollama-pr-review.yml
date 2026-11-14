@@ -100,6 +100,8 @@ jobs:
               options: {
                 temperature: 0.2,
                 repeat_penalty: 1.15
+                num_ctx: 16384,
+                num_predict: 2048
               }
             }')
 
