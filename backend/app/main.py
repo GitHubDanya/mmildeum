@@ -1,8 +1,16 @@
 from pathlib import Path
 from fastapi import FastAPI
 from app.routes import router
+from asyncio import to_thread
+from contextlib import asynccontextmanager
+from app.services.raster_download import ensure_terrain_maps
 
-app = FastAPI(title="Fullstack App")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await to_thread(ensure_terrain_maps)
+    yield
+
+app = FastAPI(title="Fullstack App", lifespan=lifespan)
 app.include_router(router)
 
 

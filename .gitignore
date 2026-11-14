@@ -16,3 +16,5 @@ EOF
 # GeoTIFF
 /backend/data/LDEM_80S_80MPP_ADJ.TIF
 /backend/data/LDSM_80S_80MPP_ADJ.TIF
+/backend/data/LDEM64_PA_pixel_202405.tif
+/backend/data/*.part

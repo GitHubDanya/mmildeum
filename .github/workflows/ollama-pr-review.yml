@@ -1,0 +1,242 @@
+name: Ollama Inline PR Reviewer
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    if: ${{ github.event.issue.pull_request && startsWith(github.event.comment.body, '/review') }}
+    runs-on: self-hosted
+    permissions:
+      pull-requests: write
+      issues: write
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+
+      - name: Generate PR Review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          MODEL_NAME: qwen2.5-coder:14b-instruct-q6_K
+        run: |
+          python3 - << 'EOF'
+          import json
+          import os
+          import re
+          import subprocess
+          import urllib.request
+
+          pr_number = os.environ["PR_NUMBER"]
+          repo = os.environ["REPO"]
+          model = os.environ["MODEL_NAME"]
+
+          commit_id = subprocess.check_output(
+              ["gh", "pr", "view", pr_number, "--json", "headRefOid", "-q", ".headRefOid"],
+              text=True,
+          ).strip()
+
+          raw_diff = subprocess.check_output(["gh", "pr", "diff", pr_number], text=True)
+
+          skip_ext = (".lock", ".min.js", ".min.css", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2")
+          skip_names = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "uv.lock"}
+
+          added_lines = {}
+          valid_github_lines = {}
+          current_file = None
+          new_line = 0
+
+          for line in raw_diff.splitlines():
+              if line.startswith("diff --git "):
+                  current_file = None
+              elif line.startswith("+++ "):
+                  if line.startswith("+++ b/"):
+                      path = line[6:]
+                      if path.endswith(skip_ext) or os.path.basename(path) in skip_names:
+                          current_file = None
+                      else:
+                          current_file = path
+                          added_lines.setdefault(current_file, set())
+                          valid_github_lines.setdefault(current_file, set())
+                  else:
+                      current_file = None
+              elif line.startswith("@@") and current_file:
+                  m = re.search(r"\+(\d+)", line)
+                  if m:
+                      new_line = int(m.group(1)) - 1
+              elif current_file:
+                  if line.startswith("+") and not line.startswith("+++"):
+                      new_line += 1
+                      added_lines[current_file].add(new_line)
+                      valid_github_lines[current_file].add(new_line)
+                  elif line.startswith("-") and not line.startswith("---"):
+                      pass
+                  elif line.startswith("\\"):
+                      pass
+                  else:
+                      new_line += 1
+                      valid_github_lines[current_file].add(new_line)
+
+          files_to_review = {f: lines for f, lines in added_lines.items() if lines and os.path.isfile(f)}
+
+          if not files_to_review:
+              subprocess.run(
+                  [
+                      "gh",
+                      "pr",
+                      "comment",
+                      pr_number,
+                      "--body",
+                      "**Ollama Code Review**: No added or modified lines found in this PR to review.",
+                  ],
+                  check=True,
+              )
+              raise SystemExit(0)
+
+          SYSTEM_PROMPT = """You are a senior code reviewer analyzing a file from a Pull Request.
+          Lines marked with '>>> Line <N> (+):' were added or modified in this PR.
+          Lines marked with '    Line <N>    :' are surrounding context from the full file.
+
+          Respond strictly in JSON matching this exact structure:
+          {
+            "file_summary": "1-sentence summary of changes in this file",
+            "comments": [
+              {
+                "verification": "Verify the exact code on Line <N> and confirm the surrounding lines do not already handle this.",
+                "line": 15,
+                "body": "Concise, actionable feedback."
+              }
+            ]
+          }
+
+          Strict Rules:
+          1. ONLY attach comments to lines marked with '>>> Line <N> (+)'.
+          2. Read the surrounding context lines carefully BEFORE commenting—NEVER suggest checks, imports, or optimizations that are already present above or below the changed line.
+          3. Only include a ```suggestion block if offering an actual code change. Never suggest identical code.
+          4. If the changes in this file look good or have no real bugs/improvements, return "comments": []."""
+
+          def build_expanded_context(filepath, target_lines, pad=40):
+              with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                  all_lines = f.read().splitlines()
+
+              total = len(all_lines)
+              intervals = sorted((max(1, ln - pad), min(total, ln + pad)) for ln in target_lines)
+              merged = []
+              for start, end in intervals:
+                  if merged and start <= merged[-1][1] + 5:
+                      merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+                  else:
+                      merged.append((start, end))
+
+              chunks = [f"--- File: {filepath} (total lines: {total}) ---"]
+              for start, end in merged:
+                  if start > 1:
+                      chunks.append(f"... [lines 1-{start - 1} omitted] ...")
+                  for idx in range(start, end + 1):
+                      prefix = f">>> Line {idx} (+):" if idx in target_lines else f"    Line {idx}    :"
+                      chunks.append(f"{prefix} {all_lines[idx - 1]}")
+              return "\n".join(chunks)
+
+          def call_ollama(prompt_text):
+              payload = json.dumps(
+                  {
+                      "model": model,
+                      "system": SYSTEM_PROMPT,
+                      "prompt": prompt_text,
+                      "format": "json",
+                      "stream": False,
+                      "options": {
+                          "temperature": 0.15,
+                          "repeat_penalty": 1.15,
+                          "num_ctx": 16384,
+                          "num_predict": 2048,
+                      },
+                  }
+              ).encode("utf-8")
+
+              req = urllib.request.Request(
+                  "http://localhost:11434/api/generate",
+                  data=payload,
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=300) as resp:
+                  data = json.loads(resp.read().decode("utf-8"))
+              raw = data.get("response", "").strip()
+              raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
+              return json.loads(raw)
+
+          summaries = []
+          inline_comments = []
+
+          for filepath, target_lines in files_to_review.items():
+              annotated = build_expanded_context(filepath, target_lines, pad=40)
+              try:
+                  result = call_ollama(annotated[:36000])
+              except Exception as e:
+                  print(f"Skipping {filepath} due to error: {e}")
+                  continue
+
+              if result.get("file_summary"):
+                  summaries.append(f"- **`{filepath}`**: {result['file_summary']}")
+
+              allowed = valid_github_lines[filepath]
+              for c in result.get("comments", []):
+                  try:
+                      ln = int(c["line"])
+                  except (KeyError, ValueError, TypeError):
+                      continue
+
+                  body = (c.get("body") or "").strip()
+                  if not body:
+                      continue
+
+                  if ln not in allowed and allowed:
+                      nearest = min(allowed, key=lambda x: abs(x - ln))
+                      if abs(nearest - ln) <= 5:
+                          ln = nearest
+                      else:
+                          continue
+
+                  inline_comments.append(
+                      {
+                          "path": filepath,
+                          "line": ln,
+                          "side": "RIGHT",
+                          "body": body,
+                      }
+                  )
+
+          overall_summary = "### Ollama Code Review\n\n" + (
+              "\n".join(summaries) if summaries else "Reviewed changes."
+          )
+          review_payload = {
+              "commit_id": commit_id,
+              "body": overall_summary,
+              "event": "COMMENT",
+              "comments": inline_comments,
+          }
+
+          with open("review.json", "w", encoding="utf-8") as f:
+              json.dump(review_payload, f)
+
+          res = subprocess.run(
+              ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews", "--input", "review.json"],
+              capture_output=True,
+              text=True,
+          )
+          if res.returncode != 0:
+              print("GitHub API failed:", res.stderr)
+              fallback = overall_summary
+              if inline_comments:
+                  fallback += "\n\n---\n" + "\n".join(
+                      f"#### `{c['path']}` (Line {c['line']})\n{c['body']}\n" for c in inline_comments
+                  )
+              subprocess.run(["gh", "pr", "comment", pr_number, "--body", fallback], check=True)
+          else:
+              print(f"Posted review with {len(inline_comments)} inline comments.")
+          EOF
