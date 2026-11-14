@@ -1,15 +1,30 @@
 <script lang="ts">
     import type { SelectedSite } from './types';
-    import { getScoreClass } from './telemetry';
+    import {
+        evaluateSiteAtTimestamp,
+        formatShortUtc,
+        formatWindowRange,
+        getScoreClass
+    } from './telemetry';
     import TelemetryChart from './TelemetryChart.svelte';
 
     export let site: SelectedSite;
     export let totalSitesCount: number;
+    export let selectedTimeMs: number;
+    export let timelineStartMs: number;
     export let onBack: () => void;
     export let onFocus: (site: SelectedSite) => void;
     export let onCompareWith: ((site: SelectedSite) => void) | undefined = undefined;
     export let onRemove: (id: number) => void;
     export let onRetry: (site: SelectedSite) => void;
+
+    $: dateEval = evaluateSiteAtTimestamp(site, selectedTimeMs);
+
+    $: visibilityCursorIndex = (() => {
+        if (!site.hasRealVisibility || site.visibilitySeries.length === 0) return null;
+        const idx = Math.round((selectedTimeMs - timelineStartMs) / (6 * 3600 * 1000));
+        return Math.max(0, Math.min(site.visibilitySeries.length - 1, idx));
+    })();
 </script>
 
 <div class="detail-panel">
@@ -26,9 +41,9 @@
         <div class="detail-nav-actions">
             {#if site.loadingScore}
                 <span class="score-badge loading">...</span>
-            {:else if site.scoreError || typeof site.score !== 'number'}
-                <span class="score-badge error">N/A</span>
-            {:else}
+            {:else if site.scoreError}
+                <span class="score-badge error">Error</span>
+            {:else if typeof site.score === 'number'}
                 <span
                         class="score-badge {getScoreClass(site.score)}"
                         title="Landing Suitability Score"
@@ -78,12 +93,12 @@
             <section class="wireframe-box">
                 <header class="wireframe-box-header">
                     <span>Graphs</span>
-                    {#if site.isEstimatedSeries}
+                    {#if site.isEstimatedSunSeries}
                         <span
                                 class="est-pill"
-                                title="Derived from site coordinates until 24h array is provided by API"
+                                title="Sun graphs derived from site coordinates; visibility plotted from API windows"
                         >
-                            24h Model
+                            24h Sun Model
                         </span>
                     {/if}
                 </header>
@@ -101,13 +116,18 @@
                     />
 
                     <TelemetryChart
-                            title="Earth Visibility for 24hrs"
-                            data={site.earthVisibility24h}
+                            title={site.hasRealVisibility ? 'Earth Visibility' : 'Earth Visibility for 24hrs'}
+                            data={site.visibilitySeries}
+                            labels={site.visibilityLabels}
                             color="#60a5fa"
                             unit="%"
                             min={0}
                             max={100}
-                            summaryText="{Math.max(...site.earthVisibility24h).toFixed(0)}% max"
+                            stepped={site.hasRealVisibility}
+                            activeIndex={visibilityCursorIndex}
+                            summaryText={site.visibilityCoveragePct !== null
+                            ? `${site.visibilityCoveragePct.toFixed(0)}% visible`
+                            : `${Math.max(...site.visibilitySeries).toFixed(0)}% max`}
                     />
 
                     <TelemetryChart
@@ -128,10 +148,24 @@
                 </header>
 
                 <div class="datapoints-stack">
-                    <div class="datapoint-item">
-                        <span class="dp-label">Terrain Type</span>
-                        <span class="dp-value">{site.terrainType ?? 'Unknown'}</span>
+                    <div class="datapoint-item date-eval-card">
+                        <div class="dp-top-row">
+                            <span class="dp-label">On {formatShortUtc(selectedTimeMs)} UTC</span>
+                            <span class="status-chip {dateEval.status.toLowerCase()}">
+                                {dateEval.status}
+                            </span>
+                        </div>
+                        <span class="dp-value">
+                            {dateEval.isEarthVisible ? 'Earth Visible' : 'Earth Occluded'} · Sun {dateEval.sunAngleDeg.toFixed(1)}°
+                        </span>
                     </div>
+
+                    {#if site.terrainType}
+                        <div class="datapoint-item">
+                            <span class="dp-label">Terrain Type</span>
+                            <span class="dp-value">{site.terrainType}</span>
+                        </div>
+                    {/if}
 
                     <div class="datapoint-item">
                         <span class="dp-label">Terrain Elevation</span>
@@ -149,39 +183,37 @@
                         </span>
                     </div>
 
-                    <div
-                            class="datapoint-item"
-                            title={site.terrainRoughnessMetadata
-                            ? `Dataset: ${site.terrainRoughnessMetadata.dataset ?? 'N/A'} | Window: ${site.terrainRoughnessMetadata.window_size_m ?? 'N/A'}m | Samples: ${site.terrainRoughnessMetadata.valid_sample_count ?? 0}/${site.terrainRoughnessMetadata.sample_count ?? 0}`
-                            : undefined}
-                    >
-                        <span class="dp-label">Terrain Roughness</span>
-                        <span class="dp-value">
-                            {site.terrainRoughnessM !== null
-                                ? `${site.terrainRoughnessM.toFixed(2)} m`
-                                : 'N/A'}
-                            {#if site.terrainRoughnessMetadata?.window_size_m}
-                                <small class="dp-sub">
-                                    ({site.terrainRoughnessMetadata.window_size_m}m window)
-                                </small>
-                            {/if}
-                        </span>
-                    </div>
-
                     <div class="datapoint-item">
-                        <span class="dp-label">Peak Sunlight</span>
+                        <span class="dp-label">LOLA Roughness</span>
                         <span class="dp-value">
-                            {site.peakSunlight !== null
-                                ? `${site.peakSunlight.toFixed(1)}%`
+                            {site.lolaRoughnessDeg !== null
+                                ? `${site.lolaRoughnessDeg.toFixed(3)}°`
                                 : 'N/A'}
                         </span>
                     </div>
 
                     <div class="datapoint-item">
-                        <span class="dp-label">Peak</span>
+                        <span class="dp-label">Daytime Avg Sun Angle</span>
                         <span class="dp-value">
-                            {site.peakValue !== null ? `${site.peakValue.toFixed(1)}°` : 'N/A'}
+                            {site.daytimeAvgSunAngle !== null
+                                ? `${site.daytimeAvgSunAngle.toFixed(2)}°`
+                                : 'N/A'}
                         </span>
+                    </div>
+
+                    <div class="datapoint-item">
+                        <span class="dp-label">
+                            Visibility Windows ({site.visibilityWindows.length})
+                        </span>
+                        {#if site.visibilityWindows.length > 0}
+                            <ul class="windows-list">
+                                {#each site.visibilityWindows as win}
+                                    <li>{formatWindowRange(win)}</li>
+                                {/each}
+                            </ul>
+                        {:else}
+                            <span class="dp-value">None</span>
+                        {/if}
                     </div>
                 </div>
             </section>
@@ -307,7 +339,7 @@
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        gap: 0.55rem;
+        gap: 0.5rem;
         padding: 0.65rem;
         flex: 1;
     }
@@ -316,10 +348,44 @@
         background-color: rgba(7, 7, 7, 0.55);
         border: 1px solid rgba(234, 234, 234, 0.1);
         border-radius: 8px;
-        padding: 0.6rem 0.7rem;
+        padding: 0.55rem 0.7rem;
         display: flex;
         flex-direction: column;
         gap: 0.2rem;
+    }
+
+    .date-eval-card {
+        border-color: rgba(234, 234, 234, 0.22);
+        background-color: rgba(234, 234, 234, 0.07);
+    }
+
+    .dp-top-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.4rem;
+    }
+
+    .status-chip {
+        font-size: 0.65rem;
+        font-weight: 600;
+        padding: 0.08rem 0.45rem;
+        border-radius: 999px;
+    }
+
+    .status-chip.optimal {
+        background-color: rgba(34, 197, 94, 0.22);
+        color: #86efac;
+    }
+
+    .status-chip.marginal {
+        background-color: rgba(234, 179, 8, 0.2);
+        color: #fde047;
+    }
+
+    .status-chip.no-go {
+        background-color: rgba(239, 68, 68, 0.2);
+        color: #fca5a5;
     }
 
     .dp-label {
@@ -330,17 +396,29 @@
     }
 
     .dp-value {
-        font-size: 0.88rem;
+        font-size: 0.85rem;
         font-weight: 500;
         color: #fff;
         word-break: break-word;
     }
 
-    .dp-sub {
-        font-size: 0.72rem;
-        font-weight: 400;
-        opacity: 0.6;
-        margin-left: 0.25rem;
+    .windows-list {
+        list-style: none;
+        margin: 0.15rem 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .windows-list li {
+        font-size: 0.76rem;
+        font-weight: 500;
+        color: #93c5fd;
+        background-color: rgba(59, 130, 246, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        border-radius: 5px;
+        padding: 0.22rem 0.45rem;
     }
 
     .detail-status {

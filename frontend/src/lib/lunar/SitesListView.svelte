@@ -55,8 +55,8 @@
         <div class="header-actions">
             {#if sites.length >= 2}
                 <button
-                        class="btn {compareMode ? 'btn-active' : 'btn-outline'}"
-                        on:click={toggleCompareMode}
+                    class="btn {compareMode ? 'btn-active' : 'btn-outline'}"
+                    on:click={toggleCompareMode}
                 >
                     {compareMode ? 'Cancel' : 'Compare'}
                 </button>
@@ -70,9 +70,9 @@
             {@const pickIndex = pickedIds.indexOf(site.id)}
             <div class="site-card" class:picked={pickIndex !== -1}>
                 <button
-                        class="site-info"
-                        on:click={() => handleCardClick(site)}
-                        title={compareMode
+                    class="site-info"
+                    on:click={() => handleCardClick(site)}
+                    title={compareMode
                         ? `Select ${site.name} for comparison`
                         : `View details for ${site.name}`}
                 >
@@ -87,28 +87,36 @@
                     <span>Lat: {site.lat}° | Lon: {site.lon}° | Alt: {site.alt}m</span>
                     {#if site.terrainType}
                         <span class="terrain-tag">{site.terrainType}</span>
+                    {:else if site.groundAngle !== null || site.lolaRoughnessDeg !== null}
+                        <span class="terrain-tag">
+                            {#if site.groundAngle !== null}Slope: {site.groundAngle.toFixed(1)}°{/if}
+                            {#if site.groundAngle !== null && site.lolaRoughnessDeg !== null} · {/if}
+                            {#if site.lolaRoughnessDeg !== null}Roughness: {site.lolaRoughnessDeg.toFixed(2)}°{/if}
+                        </span>
                     {/if}
                 </button>
 
                 <div class="site-actions">
                     {#if site.loadingScore}
-                        <span class="score-badge loading">Scoring...</span>
-                    {:else if site.scoreError || typeof site.score !== 'number'}
-                        <span class="score-badge error">N/A</span>
-                    {:else}
+                        <span class="score-badge loading">Loading...</span>
+                    {:else if site.scoreError}
+                        <span class="score-badge error">Error</span>
+                    {:else if typeof site.score === 'number'}
                         <span
-                                class="score-badge {getScoreClass(site.score)}"
-                                title="Landing Suitability Score"
+                            class="score-badge {getScoreClass(site.score)}"
+                            title="Landing Suitability Score"
                         >
                             {site.score.toFixed(1)}
                         </span>
+                    {:else}
+                        <span class="score-badge neutral">Ready</span>
                     {/if}
 
                     <button
-                            class="remove-btn"
-                            on:click={() => onRemove(site.id)}
-                            aria-label="Remove {site.name}"
-                            title="Remove site"
+                        class="remove-btn"
+                        on:click={() => onRemove(site.id)}
+                        aria-label="Remove {site.name}"
+                        title="Remove site"
                     >
                         ✕
                     </button>
@@ -233,7 +241,7 @@
 
     .terrain-tag {
         font-size: 0.7rem !important;
-        opacity: 0.6 !important;
+        opacity: 0.65 !important;
     }
 
     .site-actions {
@@ -241,5 +249,11 @@
         align-items: center;
         gap: 0.5rem;
         flex-shrink: 0;
+    }
+
+    .score-badge.neutral {
+        background-color: rgba(234, 234, 234, 0.12);
+        color: rgba(234, 234, 234, 0.85);
+        font-weight: 500;
     }
 </style>
