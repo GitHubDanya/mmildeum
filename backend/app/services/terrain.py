@@ -14,15 +14,18 @@ from rasterio.windows import Window
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 TERRAIN_MAP = DATA_DIR / "LDRM_80S_1000MPP_ADJ_CLASS.TIF"
 ELEVATION_MAP = DATA_DIR / "LDEM_80S_80MPP_ADJ.TIF"
+SLOPE_MAP = DATA_DIR / "LDSM_80S_80MPP_ADJ.TIF"
 
 
 class TerrainDataUnavailable(RuntimeError):
-    pass
+    """
+    Raised when a LOLA terrain map cannot be loaded, read, or projected
+    """
 
 
 def _in_south_pole_coverage(lat: float, lon: float) -> bool:
     """
-    Check if a lunar coordinate is inside the south pole maps (80°S to the pole).
+    Function to check if a lunar coordinate is inside the south pole maps (80°S to the pole)
     :param lat: Latitude in degrees (-90 to 90)
     :type lat: float
     :param lon: Longitude in degrees (-180 to 360)
@@ -40,7 +43,7 @@ def _in_south_pole_coverage(lat: float, lon: float) -> bool:
 @cache
 def _map_transformer(raster_crs: RasterCRS | None) -> Transformer:
     """
-    Build a cached transformer from lunar longitude and latitude to projected map coordinates.
+    Function to build a cached transformer from lunar longitude and latitude to projected map coordinates
     :param raster_crs: CRS of the raster being sampled
     :type raster_crs: RasterCRS | None
     :return: Transformer from the CRS's geodetic lon/lat to its projected x/y (always_xy order)
@@ -55,7 +58,7 @@ def _map_transformer(raster_crs: RasterCRS | None) -> Transformer:
 
 def _project(transformer: Transformer, lat: float, lon: float) -> tuple[float, float]:
     """
-    Project a lunar coordinate to map x/y, normalizing longitude to [-180, 180).
+    Function to project a lunar coordinate to map x/y, normalizing longitude to [-180, 180)
     :param transformer: Transformer from _map_transformer for the target raster
     :type transformer: Transformer
     :param lat: Latitude in degrees (-90 to 90)
@@ -76,7 +79,7 @@ def _project(transformer: Transformer, lat: float, lon: float) -> tuple[float, f
 @cache
 def _load_terrain_map():
     """
-    Load and cache the LOLA roughness class map.
+    Function to load and cache the LOLA roughness class map.
     :return: Masked class array (band 1), affine transform, and lon/lat-to-map transformer
     :rtype: tuple[numpy.ma.MaskedArray, affine.Affine, Transformer]
     """
@@ -90,7 +93,7 @@ def _load_terrain_map():
 
 def get_terrain_type(lat: float, lon: float) -> int | None:
     """
-    Get the LOLA roughness class at a lunar coordinate.
+    Function to get the LOLA roughness class at a lunar coordinate
     :param lat: Latitude in degrees (-90 to 90)
     :type lat: float
     :param lon: Longitude in degrees (-180 to 360)
@@ -115,9 +118,43 @@ def get_terrain_type(lat: float, lon: float) -> int | None:
     return int(pixel)
 
 
+def _sample_terrain_map(path: Path, map_name: str, lat: float, lon: float) -> float | None:
+    """
+    Function to read a single pixel from a LOLA south pole raster at a lunar coordinate
+    :param path: Path to the GeoTIFF to sample
+    :type path: Path
+    :param map_name: Human-readable map name used in the error message (e.g. "elevation")
+    :type map_name: str
+    :param lat: Latitude in degrees (-90 to 90)
+    :type lat: float
+    :param lon: Longitude in degrees (-180 to 360)
+    :type lon: float
+    :return: Pixel value with the band's scale and offset applied
+    :rtype: float | None
+    """
+    if not _in_south_pole_coverage(lat, lon):
+        return None
+    try:
+        if not path.is_file():
+            return None
+
+        with rasterio.open(path) as raster:
+            x, y = _project(_map_transformer(raster.crs), lat, lon)
+            row, col = raster.index(x, y)
+            if not (0 <= row < raster.height and 0 <= col < raster.width):
+                return None
+            pixel = raster.read(1, window=Window(col, row, 1, 1), masked=True)[0, 0]
+            if is_masked(pixel):
+                return None
+            value = float(pixel) * raster.scales[0] + raster.offsets[0]
+            return value if isfinite(value) else None
+    except (OSError, RasterioError, ProjError) as e:
+        raise TerrainDataUnavailable(f"[terrain.py] Could not read the LOLA {map_name} map!") from e
+
+
 def get_terrain_elevation(lat: float, lon: float) -> float | None:
     """
-    Get the LOLA elevation at a lunar coordinate by reading a single pixel.
+    Function to get the LOLA elevation at a lunar coordinate by reading a single pixel
     :param lat: Latitude in degrees (-90 to 90)
     :type lat: float
     :param lon: Longitude in degrees (-180 to 360)
@@ -125,25 +162,20 @@ def get_terrain_elevation(lat: float, lon: float) -> float | None:
     :return: Elevation with the band's scale and offset applied, or None if unavailable
     :rtype: float | None
     """
-    if not _in_south_pole_coverage(lat, lon):
+    return _sample_terrain_map(ELEVATION_MAP, "elevation", lat, lon)
+
+
+def get_ground_angle(lat: float, lon: float) -> float | None:
+    """
+    Function to get the LOLA ground slope at a lunar coordinate by reading a single pixel
+    :param lat: Latitude in degrees (-90 to 90)
+    :type lat: float
+    :param lon: Longitude in degrees (-180 to 360)
+    :type lon: float
+    :return: Slope angle in degrees (0 to 90), or None if unavailable or out of range
+    :rtype: float | None
+    """
+    angle = _sample_terrain_map(SLOPE_MAP, "slope", lat, lon)
+    if angle is None or not 0 <= angle <= 90:
         return None
-
-    try:
-        if not ELEVATION_MAP.is_file():
-            return None
-
-        with rasterio.open(ELEVATION_MAP) as raster:
-            x, y = _project(_map_transformer(raster.crs), lat, lon)
-            row, col = raster.index(x, y)
-
-            if not (0 <= row < raster.height and 0 <= col < raster.width):
-                return None
-
-            pixel = raster.read(1, window=Window(col, row, 1, 1), masked=True)[0, 0]
-            if is_masked(pixel):
-                return None
-
-            elevation = float(pixel) * raster.scales[0] + raster.offsets[0]
-            return elevation if isfinite(elevation) else None
-    except (OSError, RasterioError, ProjError) as e:
-        raise TerrainDataUnavailable("[terrain.py] Could not read the LOLA elevation map!") from e
+    return angle
