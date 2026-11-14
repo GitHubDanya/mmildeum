@@ -5,3 +5,4 @@ class FetchDataResponse(BaseModel):
     terrain_class_id: int | None
     daytime_avg_sun_angle: float | None = None
     terrain_elevation_m: float | None = None
+    ground_angle_deg: float | None = None
