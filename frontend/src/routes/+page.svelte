@@ -6,7 +6,7 @@
         terrain_class_id: number | null;
         daytime_avg_sun_angle: number | null;
         terrain_elevation_m: number | null;
-        score: number;
+        score?: number | null;
     }
 
     interface SelectedSite {
@@ -75,24 +75,29 @@
             }
 
             const data: FetchDataResponse = await response.json();
+            const validScore =
+                typeof data.score === 'number' && Number.isFinite(data.score)
+                    ? data.score
+                    : null;
 
             selectedSites = selectedSites.map((site) => {
                 if (site.id !== siteId) return site;
 
                 if (site.label) {
-                    site.label.text = `${site.name} (Score: ${data.score})\nLat: ${site.lat}°, Lon: ${site.lon}°\nAlt: ${site.alt}m`;
+                    const scoreText = validScore !== null ? `Score: ${validScore.toFixed(1)}` : 'Score: N/A';
+                    site.label.text = `${site.name} (${scoreText})\nLat: ${site.lat}°, Lon: ${site.lon}°\nAlt: ${site.alt}m`;
                 }
 
-                if (site.point && Cesium) {
-                    site.point.color = Cesium.Color.fromCssColorString(getScoreHexColor(data.score));
+                if (site.point && Cesium && validScore !== null) {
+                    site.point.color = Cesium.Color.fromCssColorString(getScoreHexColor(validScore));
                 }
 
                 return {
                     ...site,
-                    score: data.score,
+                    score: validScore,
                     terrainType: data.terrain_type,
                     loadingScore: false,
-                    scoreError: false
+                    scoreError: validScore === null
                 };
             });
         } catch (error) {
@@ -320,12 +325,12 @@
                         <div class="site-actions">
                             {#if site.loadingScore}
                                 <span class="score-badge loading">Scoring...</span>
-                            {:else if site.scoreError || site.score === null}
+                            {:else if site.scoreError || typeof site.score !== 'number'}
                                 <span class="score-badge error">N/A</span>
                             {:else}
-                            <span class="score-badge {getScoreClass(site.score)}" title="Landing Suitability Score">
-                                {site.score.toFixed(1)} 
-                            </span>
+                                <span class="score-badge {getScoreClass(site.score)}" title="Landing Suitability Score">
+                                    {site.score.toFixed(1)}
+                                </span>
                             {/if}
 
                             <button
