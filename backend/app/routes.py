@@ -23,7 +23,7 @@ def fetch_data(lat: float = Query(ge=-90, le=90, description="Lunar latitude in 
     """
     try:
         class_id = get_terrain_type(lat, long)
-        sun_data = get_average_sun_angle(lat, long)["avg_daytime_sun_angle"]
+        sun_data = get_average_sun_angle(lat, long)
         elevation_m = get_terrain_elevation(lat, long)
     except TerrainDataUnavailable as e:
         logger.exception("[routes.py] Terrain lookup failed!")
