@@ -384,7 +384,7 @@
         right: 0;
         top: 0;
         width: 40vw;
-        padding-left: 10vw;
+        padding-left: 12vw;
         padding-right: 2rem;
         display: flex;
         flex-direction: column;
@@ -498,23 +498,23 @@
     }
 
     .score-badge.score-red {
-        background-color: #f87171;
-        color: #070707;
+        background-color: rgba(239, 68, 68, 0.2);
+        color: #fca5a5;
     }
 
     .score-badge.score-yellow {
-        background-color: #facc15;
-        color: #070707;
+        background-color: rgba(234, 179, 8, 0.2);
+        color: #fde047;
     }
 
     .score-badge.score-green {
-        background-color: #4ade80;
-        color: #070707;
+        background-color: rgba(34, 197, 94, 0.2);
+        color: #86efac;
     }
 
     .score-badge.score-blue {
-        background-color: #60a5fa;
-        color: #070707;
+        background-color: rgba(59, 130, 246, 0.2);
+        color: #93c5fd;
     }
 
     .remove-btn {
