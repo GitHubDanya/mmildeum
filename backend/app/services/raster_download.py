@@ -66,7 +66,7 @@ def _download_map(destination: Path) -> None:
                             filled = percent // 5
                             bar = "#" * filled + "-" * (20 - filled)
                             progress = f"[{bar} {percent:3d}%]"
-                            print(f"\rDownloading {destination.name} {progress}", end="", file=sys.stderr, flush=True)
+                        print(f"\rDownloading {destination.name} {progress}", end="", file=sys.stderr, flush=True)
         if total_bytes is not None and received_bytes != total_bytes:
             raise OSError(f"[raster_download.py] Incomplete download ({received_bytes} of {total_bytes} bytes)!")
         with rasterio.open(temporary_path) as raster:
