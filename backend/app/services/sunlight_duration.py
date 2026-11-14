@@ -13,8 +13,9 @@ from app.services.terrain_horizon import get_terrain_horizon, is_body_visible
 
 
 HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons.api"
+# Limit the number of Horizons epochs to control response size and request cost.
+# This is an operational safeguard, not a scientific accuracy threshold.
 MAX_SAMPLES = 3000
-
 
 class SunlightDataUnavailable(RuntimeError):
     """Signal that usable solar ephemeris data could not be obtained."""
@@ -38,7 +39,7 @@ def _validate_interval(
     if not isinstance(start_time, datetime) or not isinstance(end_time, datetime):
         raise ValueError("start_time and end_time must be datetime values")
 
-    if start_time.tzinfo is None or end_time.tzinfo is None:
+    if start_time.utcoffset() is None or end_time.utcoffset() is None:
         raise ValueError("start_time and end_time must include a timezone")
 
     if not isinstance(step_minutes, int) or isinstance(step_minutes, bool):
@@ -57,7 +58,12 @@ def _validate_interval(
 
     count = round(duration_seconds / step_seconds)
 
-    if not isclose(duration_seconds, count * step_seconds, abs_tol=1e-6):
+    if not isclose(
+    duration_seconds,
+    count * step_seconds,
+    rel_tol=0.0,
+    abs_tol=1e-6,
+    ):
         raise ValueError(
             "The interval duration must be divisible by step_minutes"
         )
@@ -126,6 +132,14 @@ def _horizons_positions(
             "JPL Horizons request failed"
         ) from exc
 
+    # Horizons can return an application error with HTTP status 200.
+    if isinstance(data, dict) and data.get("error"):
+        error_message = str(data["error"])[:300]
+
+        raise SunlightDataUnavailable(
+            f"JPL Horizons rejected the request: {error_message}"
+        )
+
     raw = data.get("result") if isinstance(data, dict) else None
 
     if not isinstance(raw, str):
@@ -133,10 +147,11 @@ def _horizons_positions(
             "JPL Horizons response has no ephemeris"
         )
 
+    # Match complete Horizons table delimiters on separate lines.
     match = re.search(
-        r"\$\$SOE\s*(.*?)\s*\$\$EOE",
+        r"^[ \t]*\$\$SOE[ \t]*\r?\n(.*?)^[ \t]*\$\$EOE[ \t]*$",
         raw,
-        re.DOTALL,
+        re.MULTILINE | re.DOTALL,
     )
 
     if match is None:
