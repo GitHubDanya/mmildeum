@@ -280,7 +280,7 @@
                         {:else if item.site.missionSunlight}
                             <span
                                     class="sun-dur-tag"
-                                    title="Calculated via /sunlight-duration for {formatDurationHours(missionDurationHours)}"
+                                    title="Calculated via /fetch-data for {formatDurationHours(missionDurationHours)}"
                             >
                                 ☀ {item.site.missionSunlight.sunlitHours.toFixed(1)}h ({item.site.missionSunlight.sunlitPercentage.toFixed(0)}%)
                             </span>

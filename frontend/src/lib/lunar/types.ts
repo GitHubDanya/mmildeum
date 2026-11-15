@@ -3,34 +3,6 @@ export interface VisibilityWindow {
     end: string;
 }
 
-export interface SunlightDurationResponse {
-    sunlight_duration_hours?: number | null;
-    average_sunlight_duration_hours?: number | null;
-    avg_sunlight_duration_hours?: number | null;
-    total_sunlight_hours?: number | null;
-    sunlight_hours?: number | null;
-    duration_hours?: number | null;
-    sunlight_duration_minutes?: number | null;
-    sunlight_minutes?: number | null;
-    duration_minutes?: number | null;
-    sunlight_duration_seconds?: number | null;
-    sunlight_seconds?: number | null;
-    total_duration_hours?: number | null;
-    interval_hours?: number | null;
-    total_hours?: number | null;
-    sunlight_percentage?: number | null;
-    sunlit_percentage?: number | null;
-    sunlight_percent?: number | null;
-    sunlight_fraction?: number | null;
-    sunlit_fraction?: number | null;
-    sunlight_ratio?: number | null;
-    step_minutes?: number | null;
-    total_samples?: number | null;
-    sample_count?: number | null;
-    sunlit_samples?: number | null;
-    sunlight_samples?: number | null;
-}
-
 export interface MissionSunlightMetrics {
     startIso: string;
     endIso: string;
@@ -43,7 +15,10 @@ export interface MissionSunlightMetrics {
 }
 
 export interface FetchDataResponse {
-    daytime_avg_sun_angle: number | null;
+    mission_start: string;
+    mission_end: string;
+    step_minutes: number;
+    sunlight_windows?: VisibilityWindow[] | null;
     terrain_elevation_m: number | null;
     ground_angle_deg?: number | null;
     ground_angle?: number | null;
@@ -58,6 +33,21 @@ export interface FetchDataResponse {
     earth_visibility_24h?: number[] | null;
     sunlight_angle_24h?: number[] | null;
     score?: number | null;
+    scoring_metrics?: {
+        sunlight_fraction?: number | null;
+        longest_darkness_hours?: number | null;
+        earth_visibility_fraction?: number | null;
+        longest_earth_blackout_hours?: number | null;
+        slope_p95_degrees?: number | null;
+    };
+    scoring?: {
+        score?: number | null;
+        data_quality?: string;
+        metadata?: {
+            sample_count?: number | null;
+            time_step_minutes?: number | null;
+        };
+    };
 }
 
 export interface SelectedSite {

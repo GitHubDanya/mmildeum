@@ -152,7 +152,7 @@
                 </header>
 
                 <div class="datapoints-stack">
-                    <!-- Mission Sunlight Duration Card (/sunlight-duration) -->
+                    <!-- Mission sunlight from the unified site evaluation -->
                     <div class="datapoint-item mission-sun-card">
                         <div class="dp-top-row">
                             <span class="dp-label">
