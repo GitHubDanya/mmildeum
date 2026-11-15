@@ -1,18 +1,37 @@
 <script lang="ts">
+    import { onDestroy } from 'svelte';
     import '#lib/lunar/shared.css';
-    import type { SelectedSite } from '#lib/lunar/types';
-    import { buildFallbackSeries, fetchSiteTelemetry } from '#lib/lunar/telemetry';
+    import type { MissionSunlightMetrics, SelectedSite } from '#lib/lunar/types';
+    import {
+        HOURS_LABELS,
+        buildFallbackSeries,
+        fetchSiteTelemetry,
+        fetchSunlightDuration,
+        findRecommendedLandingWindows,
+        getTimelineBounds
+    } from '#lib/lunar/telemetry';
     import LunarGlobe from '#lib/lunar/LunarGlobe.svelte';
     import SitesListView from '#lib/lunar/SitesListView.svelte';
     import SiteDetailView from '#lib/lunar/SiteDetailView.svelte';
     import SiteCompareView from '#lib/lunar/SiteCompareView.svelte';
+    import MissionTimelineSlider from '#lib/lunar/MissionTimelineSlider.svelte';
 
     let globe: LunarGlobe;
+    let isViewingEarth = false;
     let selectedSites: SelectedSite[] = [];
     let activeSiteId: number | null = null;
     let comparePairIds: [number, number] | null = null;
     let nextSiteId = 1;
     let viewportWidth = 1440;
+
+    let selectedTimeMs = Date.UTC(2026, 9, 1, 0, 0);
+    let missionDurationHours = 72;
+    let hasUserScrubbedTime = false;
+
+    const sunlightCache = new Map<string, MissionSunlightMetrics>();
+    const activeAbortControllers = new Map<number, AbortController>();
+    const inFlightKeys = new Map<number, string>();
+    let sunlightDebounceTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 
     $: activeSite = selectedSites.find((s) => s.id === activeSiteId) ?? null;
 
@@ -22,6 +41,25 @@
         const b = selectedSites.find((s) => s.id === comparePairIds![1]);
         return a && b ? ([a, b] as [SelectedSite, SelectedSite]) : null;
     })();
+
+    $: timelineTargetSites = compareSites
+        ? [compareSites[0], compareSites[1]]
+        : activeSite
+            ? [activeSite]
+            : selectedSites;
+
+    $: timelineBounds = getTimelineBounds(selectedSites);
+    $: if (selectedTimeMs < timelineBounds.startMs || selectedTimeMs > timelineBounds.endMs) {
+        selectedTimeMs = timelineBounds.startMs;
+    }
+
+    $: readyTargetSites = timelineTargetSites.filter((s) => !s.loadingScore && !s.scoreError);
+    $: readySiteIdsKey = readyTargetSites.map((s) => s.id).join(',');
+    $: sunlightQueryKey = `${selectedTimeMs}|${missionDurationHours}|${readySiteIdsKey}`;
+
+    $: if (sunlightQueryKey && readyTargetSites.length > 0) {
+        scheduleSunlightFetch(selectedTimeMs, missionDurationHours, readyTargetSites);
+    }
 
     $: isExpanded = Boolean(activeSite || compareSites);
 
@@ -36,6 +74,113 @@
         : viewportWidth * 0.4;
     $: rightInsetPx = Math.max(0, menuWidthPx - viewportWidth * 0.08);
 
+    function buildSunlightCacheKey(
+        site: SelectedSite,
+        startMs: number,
+        durationHours: number
+    ): string {
+        return `${site.rawLat.toFixed(4)}_${site.rawLon.toFixed(4)}_${startMs}_${durationHours}`;
+    }
+
+    async function fetchSiteMissionSunlight(
+        site: SelectedSite,
+        startMs: number,
+        durationHours: number,
+        bypassCache = false
+    ) {
+        const cacheKey = buildSunlightCacheKey(site, startMs, durationHours);
+
+        if (!bypassCache && sunlightCache.has(cacheKey)) {
+            const cached = sunlightCache.get(cacheKey)!;
+            selectedSites = selectedSites.map((s) =>
+                s.id === site.id
+                    ? {
+                        ...s,
+                        missionSunlight: cached,
+                        loadingMissionSunlight: false,
+                        missionSunlightError: null
+                    }
+                    : s
+            );
+            return;
+        }
+
+        if (!bypassCache && inFlightKeys.get(site.id) === cacheKey) {
+            return;
+        }
+
+        const prevController = activeAbortControllers.get(site.id);
+        if (prevController) prevController.abort();
+
+        const controller = new AbortController();
+        activeAbortControllers.set(site.id, controller);
+        inFlightKeys.set(site.id, cacheKey);
+
+        selectedSites = selectedSites.map((s) =>
+            s.id === site.id
+                ? { ...s, loadingMissionSunlight: true, missionSunlightError: null }
+                : s
+        );
+
+        try {
+            const endMs = startMs + durationHours * 3600 * 1000;
+            const metrics = await fetchSunlightDuration(
+                site.rawLat,
+                site.rawLon,
+                startMs,
+                endMs,
+                60,
+                controller.signal
+            );
+
+            sunlightCache.set(cacheKey, metrics);
+            selectedSites = selectedSites.map((s) =>
+                s.id === site.id
+                    ? {
+                        ...s,
+                        missionSunlight: metrics,
+                        loadingMissionSunlight: false,
+                        missionSunlightError: null
+                    }
+                    : s
+            );
+        } catch (error: any) {
+            if (error?.name === 'AbortError') return;
+            selectedSites = selectedSites.map((s) =>
+                s.id === site.id
+                    ? {
+                        ...s,
+                        loadingMissionSunlight: false,
+                        missionSunlightError: error?.message ?? 'Sunlight lookup failed'
+                    }
+                    : s
+            );
+        } finally {
+            if (activeAbortControllers.get(site.id) === controller) {
+                activeAbortControllers.delete(site.id);
+            }
+            if (inFlightKeys.get(site.id) === cacheKey) {
+                inFlightKeys.delete(site.id);
+            }
+        }
+    }
+
+    function scheduleSunlightFetch(
+        startMs: number,
+        durationHours: number,
+        sitesToQuery: SelectedSite[]
+    ) {
+        if (sunlightDebounceTimer !== undefined) {
+            clearTimeout(sunlightDebounceTimer);
+        }
+
+        sunlightDebounceTimer = setTimeout(() => {
+            for (const site of sitesToQuery) {
+                fetchSiteMissionSunlight(site, startMs, durationHours);
+            }
+        }, 400);
+    }
+
     async function loadTelemetry(site: SelectedSite) {
         selectedSites = selectedSites.map((s) =>
             s.id === site.id ? { ...s, loadingScore: true, scoreError: false } : s
@@ -48,6 +193,22 @@
                     ? { ...s, ...updates, loadingScore: false, scoreError: false }
                     : s
             );
+
+            if (!hasUserScrubbedTime) {
+                const updatedSite = selectedSites.find((s) => s.id === site.id);
+                if (updatedSite) {
+                    const bounds = getTimelineBounds(selectedSites);
+                    const best = findRecommendedLandingWindows(
+                        [updatedSite],
+                        bounds.startMs,
+                        bounds.endMs,
+                        missionDurationHours
+                    );
+                    if (best.length > 0) {
+                        selectedTimeMs = best[0].peakMs;
+                    }
+                }
+            }
         } catch (error) {
             console.error(`Failed to fetch data for site #${site.id}:`, error);
             selectedSites = selectedSites.map((s) =>
@@ -75,19 +236,30 @@
             daytimeAvgSunAngle: null,
             terrainElevationM: null,
             groundAngle: null,
-            terrainRoughnessM: null,
-            terrainRoughnessMetadata: null,
+            lolaRoughnessDeg: null,
+            visibilityWindows: [],
+            visibilityCoveragePct: null,
+            visibilitySeries: fallback.earthVisibility24h,
+            visibilityLabels: HOURS_LABELS,
+            hasRealVisibility: false,
             peakSunlight: null,
             peakValue: null,
             sunlight24h: fallback.sunlight24h,
-            earthVisibility24h: fallback.earthVisibility24h,
             sunlightAngle24h: fallback.sunlightAngle24h,
-            isEstimatedSeries: true,
+            isEstimatedSunSeries: true,
             loadingScore: true,
-            scoreError: false
+            scoreError: false,
+            missionSunlight: null,
+            loadingMissionSunlight: false,
+            missionSunlightError: null
         };
 
         selectedSites = [...selectedSites, newSite];
+
+        if (activeSiteId !== null) {
+            activeSiteId = id;
+        }
+
         loadTelemetry(newSite);
     }
 
@@ -101,7 +273,6 @@
         const found = selectedSites.find((s) => s.id === siteId);
         if (!found) return;
 
-        // If already comparing these two sites, clicking a pin flies to it without closing compare view
         if (comparePairIds && comparePairIds.includes(siteId)) {
             globe?.flyToSite(found);
             return;
@@ -123,6 +294,13 @@
     }
 
     function handleRemoveSite(id: number) {
+        const controller = activeAbortControllers.get(id);
+        if (controller) {
+            controller.abort();
+            activeAbortControllers.delete(id);
+        }
+        inFlightKeys.delete(id);
+
         if (activeSiteId === id) activeSiteId = null;
         if (comparePairIds && comparePairIds.includes(id)) {
             comparePairIds = null;
@@ -131,20 +309,49 @@
     }
 
     function handleClearAll() {
+        for (const controller of activeAbortControllers.values()) {
+            controller.abort();
+        }
+        activeAbortControllers.clear();
+        inFlightKeys.clear();
+
         selectedSites = [];
         activeSiteId = null;
         comparePairIds = null;
+        hasUserScrubbedTime = false;
         nextSiteId = 1;
     }
+
+    function handleTimelineChange(nextMs: number) {
+        hasUserScrubbedTime = true;
+        selectedTimeMs = nextMs;
+    }
+
+    function handleDurationChange(nextHours: number) {
+        missionDurationHours = nextHours;
+    }
+
+    onDestroy(() => {
+        if (sunlightDebounceTimer !== undefined) {
+            clearTimeout(sunlightDebounceTimer);
+        }
+        for (const controller of activeAbortControllers.values()) {
+            controller.abort();
+        }
+        activeAbortControllers.clear();
+        inFlightKeys.clear();
+    });
 </script>
 
 <svelte:window bind:innerWidth={viewportWidth} />
 
 <LunarGlobe
         bind:this={globe}
+        bind:isViewingEarth
         sites={selectedSites}
         {highlightedSiteIds}
         {rightInsetPx}
+        {selectedTimeMs}
         onAddSite={handleAddSite}
         onSelectSite={handleSelectSiteById}
 />
@@ -157,6 +364,9 @@
                 siteA={compareSites[0]}
                 siteB={compareSites[1]}
                 allSites={selectedSites}
+                {selectedTimeMs}
+                {missionDurationHours}
+                timelineStartMs={timelineBounds.startMs}
                 onChangePair={(pair) => (comparePairIds = pair)}
                 onBack={() => (comparePairIds = null)}
                 onFocus={(site) => globe?.flyToSite(site)}
@@ -166,11 +376,16 @@
         <SiteDetailView
                 site={activeSite}
                 totalSitesCount={selectedSites.length}
+                {selectedTimeMs}
+                {missionDurationHours}
+                timelineStartMs={timelineBounds.startMs}
                 onBack={() => (activeSiteId = null)}
                 onFocus={(site) => globe?.flyToSite(site)}
                 onCompareWith={handleCompareFromDetail}
                 onRemove={handleRemoveSite}
                 onRetry={loadTelemetry}
+                onRetrySunlightDuration={(s) =>
+                fetchSiteMissionSunlight(s, selectedTimeMs, missionDurationHours, true)}
         />
     {:else if selectedSites.length > 0}
         <SitesListView
@@ -187,7 +402,27 @@
 
 <div class="top-bar">
     <button class="btn btn-white">Our Scoring Algorithm</button>
+    {#if isViewingEarth}
+        <button class="btn btn-moon" on:click={() => globe?.flyToMoon()}>
+            ← Back to Moon
+        </button>
+    {:else}
+        <button class="btn btn-earth" on:click={() => globe?.flyToEarth()}>
+            View Earth
+        </button>
+    {/if}
 </div>
+
+<MissionTimelineSlider
+        startMs={timelineBounds.startMs}
+        endMs={timelineBounds.endMs}
+        {selectedTimeMs}
+        {missionDurationHours}
+        targetSites={timelineTargetSites}
+        {rightInsetPx}
+        onChangeTime={handleTimelineChange}
+        onChangeDuration={handleDurationChange}
+/>
 
 <style>
     @font-face {
@@ -246,6 +481,27 @@
         left: 20px;
         display: flex;
         flex-direction: row;
+        gap: 0.5rem;
         z-index: 10;
+    }
+
+    .btn-earth {
+        background-color: rgba(37, 99, 235, 0.25);
+        color: #93c5fd;
+        border: 1px solid rgba(96, 165, 250, 0.45);
+    }
+
+    .btn-earth:hover {
+        background-color: rgba(37, 99, 235, 0.4);
+    }
+
+    .btn-moon {
+        background-color: rgba(234, 234, 234, 0.18);
+        color: #ffffff;
+        border: 1px solid rgba(234, 234, 234, 0.45);
+    }
+
+    .btn-moon:hover {
+        background-color: rgba(234, 234, 234, 0.3);
     }
 </style>

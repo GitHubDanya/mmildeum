@@ -24,12 +24,14 @@
 
     export let title: string;
     export let data: number[];
+    export let labels: string[] = HOURS_LABELS;
     export let color = '#eaeaea';
     export let unit = '';
     export let min = 0;
     export let max = 100;
     export let stepped = false;
     export let summaryText = '';
+    export let activeIndex: number | null = null;
 
     export let primaryLabel = 'Site A';
     export let compareData: number[] | undefined = undefined;
@@ -106,16 +108,41 @@
     }
 
     function minimalChart(node: HTMLCanvasElement, config: SparkChartConfig) {
+        const getLabels = (cfg: SparkChartConfig) => cfg.labels ?? HOURS_LABELS;
+        let currentCursorIndex = config.activeIndex ?? null;
+
+        const cursorPlugin = {
+            id: 'timelineCursor',
+            afterDatasetsDraw(chartInstance: any) {
+                if (currentCursorIndex === null || currentCursorIndex === undefined) return;
+                const meta = chartInstance.getDatasetMeta(0);
+                const point = meta?.data?.[currentCursorIndex];
+                if (!point) return;
+
+                const { ctx, chartArea } = chartInstance;
+                ctx.save();
+                ctx.beginPath();
+                ctx.setLineDash([3, 3]);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+                ctx.lineWidth = 1.25;
+                ctx.moveTo(point.x, chartArea.top);
+                ctx.lineTo(point.x, chartArea.bottom);
+                ctx.stroke();
+                ctx.restore();
+            }
+        };
+
         const chart = new Chart(node, {
             type: 'line',
             data: {
-                labels: HOURS_LABELS,
+                labels: getLabels(config),
                 datasets: buildDatasets(config) as any
             },
+            plugins: [cursorPlugin],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                animation: { duration: 250 },
+                animation: { duration: 200 },
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
                     legend: { display: false },
@@ -152,8 +179,20 @@
                             font: { family: 'Rubik, sans-serif', size: 9 },
                             maxRotation: 0,
                             autoSkip: false,
-                            callback: (_val, index) =>
-                                index % 6 === 0 || index === 23 ? HOURS_LABELS[index] : ''
+                            callback: function (_val, index) {
+                                const activeLabels = (this.chart.data.labels as string[]) ?? [];
+                                const total = activeLabels.length;
+                                if (total <= 24) {
+                                    return index % 6 === 0 || index === total - 1
+                                        ? activeLabels[index]
+                                        : '';
+                                }
+                                const step = Math.max(1, Math.floor((total - 1) / 4));
+                                if (index % step === 0 || index === total - 1) {
+                                    return (activeLabels[index] ?? '').replace(/\s+\d{2}:\d{2}$/, '');
+                                }
+                                return '';
+                            }
                         }
                     },
                     y: {
@@ -174,6 +213,8 @@
 
         return {
             update(newConfig: SparkChartConfig) {
+                currentCursorIndex = newConfig.activeIndex ?? null;
+                chart.data.labels = getLabels(newConfig);
                 chart.data.datasets = buildDatasets(newConfig) as any;
                 if (chart.options.plugins?.tooltip) {
                     chart.options.plugins.tooltip.displayColors = Array.isArray(
@@ -184,7 +225,7 @@
                     chart.options.scales.y.min = newConfig.min;
                     chart.options.scales.y.max = newConfig.max;
                 }
-                chart.update();
+                chart.update('none');
             },
             destroy() {
                 chart.destroy();
@@ -215,11 +256,13 @@
         <canvas
                 use:minimalChart={{
                 data,
+                labels,
                 color,
                 unit,
                 min,
                 max,
                 stepped,
+                activeIndex,
                 primaryLabel,
                 compareData,
                 compareColor,

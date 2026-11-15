@@ -1,11 +1,19 @@
 <script lang="ts">
     import type { SelectedSite } from './types';
-    import { getScoreClass } from './telemetry';
+    import {
+        evaluateSiteAtTimestamp,
+        formatDurationHours,
+        formatShortDateOnlyUtc,
+        getScoreClass
+    } from './telemetry';
     import TelemetryChart from './TelemetryChart.svelte';
 
     export let siteA: SelectedSite;
     export let siteB: SelectedSite;
     export let allSites: SelectedSite[] = [];
+    export let selectedTimeMs: number;
+    export let missionDurationHours = 72;
+    export let timelineStartMs: number;
     export let onChangePair: (pair: [number, number]) => void;
     export let onBack: () => void;
     export let onFocus: (site: SelectedSite) => void;
@@ -46,12 +54,32 @@
         return valA < valB ? 'A' : 'B';
     }
 
+    $: evalA = evaluateSiteAtTimestamp(siteA, selectedTimeMs);
+    $: evalB = evaluateSiteAtTimestamp(siteB, selectedTimeMs);
+    $: dateWinner = compareWinner(evalA.suitabilityScore, evalB.suitabilityScore, true);
+
+    $: missionSunWinner = compareWinner(
+        siteA.missionSunlight?.sunlitHours ?? null,
+        siteB.missionSunlight?.sunlitHours ?? null,
+        true
+    );
+
     $: scoreWinner = compareWinner(siteA.score, siteB.score, true);
     $: slopeWinner = compareWinner(siteA.groundAngle, siteB.groundAngle, false);
-    $: roughnessWinner = compareWinner(siteA.terrainRoughnessM, siteB.terrainRoughnessM, false);
-    $: sunlightWinner = compareWinner(siteA.peakSunlight, siteB.peakSunlight, true);
-    $: peakWinner = compareWinner(siteA.peakValue, siteB.peakValue, true);
+    $: roughnessWinner = compareWinner(siteA.lolaRoughnessDeg, siteB.lolaRoughnessDeg, false);
+    $: visibilityWinner = compareWinner(
+        siteA.visibilityCoveragePct,
+        siteB.visibilityCoveragePct,
+        true
+    );
     $: avgSunWinner = compareWinner(siteA.daytimeAvgSunAngle, siteB.daytimeAvgSunAngle, true);
+    $: canOverlayVisibility = siteA.visibilityLabels.length === siteB.visibilityLabels.length;
+
+    $: visibilityCursorIndex = (() => {
+        if (!siteA.hasRealVisibility || siteA.visibilitySeries.length === 0) return null;
+        const idx = Math.round((selectedTimeMs - timelineStartMs) / (6 * 3600 * 1000));
+        return Math.max(0, Math.min(siteA.visibilitySeries.length - 1, idx));
+    })();
 </script>
 
 <div class="compare-panel">
@@ -67,7 +95,6 @@
         </button>
     </div>
 
-    <!-- Site A vs Site B Selector Strip -->
     <div class="selectors-row">
         <div class="selector-card" style="border-top: 2px solid {COLOR_A};">
             <div class="selector-top">
@@ -82,7 +109,11 @@
                     {/each}
                 </select>
 
-                <button class="mini-focus-btn" on:click={() => onFocus(siteA)} title="Fly to {siteA.name}">
+                <button
+                        class="mini-focus-btn"
+                        on:click={() => onFocus(siteA)}
+                        title="Fly to {siteA.name}"
+                >
                     Focus
                 </button>
             </div>
@@ -91,9 +122,9 @@
                 <span>{siteA.lat}°, {siteA.lon}°</span>
                 {#if siteA.loadingScore}
                     <span class="score-badge loading">...</span>
-                {:else if siteA.scoreError || typeof siteA.score !== 'number'}
-                    <span class="score-badge error">N/A</span>
-                {:else}
+                {:else if siteA.scoreError}
+                    <span class="score-badge error">Error</span>
+                {:else if typeof siteA.score === 'number'}
                     <span class="score-badge {getScoreClass(siteA.score)}">
                         {siteA.score.toFixed(1)}
                     </span>
@@ -114,7 +145,11 @@
                     {/each}
                 </select>
 
-                <button class="mini-focus-btn" on:click={() => onFocus(siteB)} title="Fly to {siteB.name}">
+                <button
+                        class="mini-focus-btn"
+                        on:click={() => onFocus(siteB)}
+                        title="Fly to {siteB.name}"
+                >
                     Focus
                 </button>
             </div>
@@ -123,9 +158,9 @@
                 <span>{siteB.lat}°, {siteB.lon}°</span>
                 {#if siteB.loadingScore}
                     <span class="score-badge loading">...</span>
-                {:else if siteB.scoreError || typeof siteB.score !== 'number'}
-                    <span class="score-badge error">N/A</span>
-                {:else}
+                {:else if siteB.scoreError}
+                    <span class="score-badge error">Error</span>
+                {:else if typeof siteB.score === 'number'}
                     <span class="score-badge {getScoreClass(siteB.score)}">
                         {siteB.score.toFixed(1)}
                     </span>
@@ -153,12 +188,11 @@
     {/if}
 
     <div class="compare-columns">
-        <!-- Left Column: Overlaid 24h Graphs -->
         <section class="wireframe-box">
             <header class="wireframe-box-header">
-                <span>24h Overlay Graphs</span>
-                {#if siteA.isEstimatedSeries || siteB.isEstimatedSeries}
-                    <span class="est-pill">24h Model</span>
+                <span>Overlay Graphs</span>
+                {#if siteA.isEstimatedSunSeries || siteB.isEstimatedSunSeries}
+                    <span class="est-pill">24h Sun Model</span>
                 {/if}
             </header>
 
@@ -178,16 +212,19 @@
                 />
 
                 <TelemetryChart
-                        title="Earth Visibility for 24hrs"
-                        data={siteA.earthVisibility24h}
+                        title={siteA.hasRealVisibility ? 'Earth Visibility' : 'Earth Visibility for 24hrs'}
+                        data={siteA.visibilitySeries}
+                        labels={siteA.visibilityLabels}
                         color={COLOR_A}
                         primaryLabel={siteA.name}
-                        compareData={siteB.earthVisibility24h}
+                        compareData={canOverlayVisibility ? siteB.visibilitySeries : undefined}
                         compareColor={COLOR_B}
                         compareLabel={siteB.name}
                         unit="%"
                         min={0}
                         max={100}
+                        stepped={siteA.hasRealVisibility}
+                        activeIndex={visibilityCursorIndex}
                 />
 
                 <TelemetryChart
@@ -205,7 +242,6 @@
             </div>
         </section>
 
-        <!-- Right Column: Side-by-Side Metrics -->
         <section class="wireframe-box">
             <header class="wireframe-box-header">
                 <span>Metrics Comparison</span>
@@ -218,21 +254,64 @@
                     <span style="color: {COLOR_B};">{siteB.name}</span>
                 </div>
 
-                <div class="metric-row">
-                    <span class="m-label">Score</span>
-                    <span class="m-val" class:winner={scoreWinner === 'A'}>
-                        {siteA.score !== null ? siteA.score.toFixed(1) : 'N/A'}
+                <!-- Mission Sunlight Duration Row (/sunlight-duration) -->
+                <div class="metric-row mission-row">
+                    <span class="m-label">
+                        Mission Sun ({formatDurationHours(missionDurationHours)})
                     </span>
-                    <span class="m-val" class:winner={scoreWinner === 'B'}>
-                        {siteB.score !== null ? siteB.score.toFixed(1) : 'N/A'}
+                    <span class="m-val" class:winner={missionSunWinner === 'A'}>
+                        {#if siteA.loadingMissionSunlight}
+                            ...
+                        {:else if siteA.missionSunlight}
+                            {siteA.missionSunlight.sunlitHours.toFixed(1)}h
+                            <small class="m-sub">
+                                {siteA.missionSunlight.sunlitPercentage.toFixed(0)}% sunlit
+                            </small>
+                        {:else}
+                            N/A
+                        {/if}
+                    </span>
+                    <span class="m-val" class:winner={missionSunWinner === 'B'}>
+                        {#if siteB.loadingMissionSunlight}
+                            ...
+                        {:else if siteB.missionSunlight}
+                            {siteB.missionSunlight.sunlitHours.toFixed(1)}h
+                            <small class="m-sub">
+                                {siteB.missionSunlight.sunlitPercentage.toFixed(0)}% sunlit
+                            </small>
+                        {:else}
+                            N/A
+                        {/if}
                     </span>
                 </div>
 
-                <div class="metric-row">
-                    <span class="m-label">Terrain</span>
-                    <span class="m-val">{siteA.terrainType ?? 'Unknown'}</span>
-                    <span class="m-val">{siteB.terrainType ?? 'Unknown'}</span>
+                <div class="metric-row highlight-row">
+                    <span class="m-label">On {formatShortDateOnlyUtc(selectedTimeMs)}</span>
+                    <span class="m-val" class:winner={dateWinner === 'A'}>
+                        {evalA.status}
+                        <small class="m-sub">
+                            {evalA.isEarthVisible ? 'LOS' : 'No LOS'} · {evalA.sunAngleDeg.toFixed(0)}°
+                        </small>
+                    </span>
+                    <span class="m-val" class:winner={dateWinner === 'B'}>
+                        {evalB.status}
+                        <small class="m-sub">
+                            {evalB.isEarthVisible ? 'LOS' : 'No LOS'} · {evalB.sunAngleDeg.toFixed(0)}°
+                        </small>
+                    </span>
                 </div>
+
+                {#if siteA.score !== null || siteB.score !== null}
+                    <div class="metric-row">
+                        <span class="m-label">Score</span>
+                        <span class="m-val" class:winner={scoreWinner === 'A'}>
+                            {siteA.score !== null ? siteA.score.toFixed(1) : 'N/A'}
+                        </span>
+                        <span class="m-val" class:winner={scoreWinner === 'B'}>
+                            {siteB.score !== null ? siteB.score.toFixed(1) : 'N/A'}
+                        </span>
+                    </div>
+                {/if}
 
                 <div class="metric-row">
                     <span class="m-label">Elevation</span>
@@ -259,36 +338,16 @@
                 </div>
 
                 <div class="metric-row">
-                    <span class="m-label">Roughness</span>
+                    <span class="m-label">LOLA Roughness</span>
                     <span class="m-val" class:winner={roughnessWinner === 'A'}>
-                        {siteA.terrainRoughnessM !== null
-                            ? `${siteA.terrainRoughnessM.toFixed(2)} m`
+                        {siteA.lolaRoughnessDeg !== null
+                            ? `${siteA.lolaRoughnessDeg.toFixed(3)}°`
                             : 'N/A'}
                     </span>
                     <span class="m-val" class:winner={roughnessWinner === 'B'}>
-                        {siteB.terrainRoughnessM !== null
-                            ? `${siteB.terrainRoughnessM.toFixed(2)} m`
+                        {siteB.lolaRoughnessDeg !== null
+                            ? `${siteB.lolaRoughnessDeg.toFixed(3)}°`
                             : 'N/A'}
-                    </span>
-                </div>
-
-                <div class="metric-row">
-                    <span class="m-label">Peak Sunlight</span>
-                    <span class="m-val" class:winner={sunlightWinner === 'A'}>
-                        {siteA.peakSunlight !== null ? `${siteA.peakSunlight.toFixed(1)}%` : 'N/A'}
-                    </span>
-                    <span class="m-val" class:winner={sunlightWinner === 'B'}>
-                        {siteB.peakSunlight !== null ? `${siteB.peakSunlight.toFixed(1)}%` : 'N/A'}
-                    </span>
-                </div>
-
-                <div class="metric-row">
-                    <span class="m-label">Peak Angle</span>
-                    <span class="m-val" class:winner={peakWinner === 'A'}>
-                        {siteA.peakValue !== null ? `${siteA.peakValue.toFixed(1)}°` : 'N/A'}
-                    </span>
-                    <span class="m-val" class:winner={peakWinner === 'B'}>
-                        {siteB.peakValue !== null ? `${siteB.peakValue.toFixed(1)}°` : 'N/A'}
                     </span>
                 </div>
 
@@ -296,12 +355,26 @@
                     <span class="m-label">Avg Sun Angle</span>
                     <span class="m-val" class:winner={avgSunWinner === 'A'}>
                         {siteA.daytimeAvgSunAngle !== null
-                            ? `${siteA.daytimeAvgSunAngle.toFixed(1)}°`
+                            ? `${siteA.daytimeAvgSunAngle.toFixed(2)}°`
                             : 'N/A'}
                     </span>
                     <span class="m-val" class:winner={avgSunWinner === 'B'}>
                         {siteB.daytimeAvgSunAngle !== null
-                            ? `${siteB.daytimeAvgSunAngle.toFixed(1)}°`
+                            ? `${siteB.daytimeAvgSunAngle.toFixed(2)}°`
+                            : 'N/A'}
+                    </span>
+                </div>
+
+                <div class="metric-row">
+                    <span class="m-label">Visibility</span>
+                    <span class="m-val" class:winner={visibilityWinner === 'A'}>
+                        {siteA.visibilityCoveragePct !== null
+                            ? `${siteA.visibilityCoveragePct.toFixed(1)}% (${siteA.visibilityWindows.length})`
+                            : 'N/A'}
+                    </span>
+                    <span class="m-val" class:winner={visibilityWinner === 'B'}>
+                        {siteB.visibilityCoveragePct !== null
+                            ? `${siteB.visibilityCoveragePct.toFixed(1)}% (${siteB.visibilityWindows.length})`
                             : 'N/A'}
                     </span>
                 </div>
@@ -494,11 +567,21 @@
         grid-template-columns: 1.05fr 1fr 1fr;
         align-items: center;
         gap: 0.4rem;
-        padding: 0.45rem 0.5rem;
+        padding: 0.42rem 0.5rem;
         border-radius: 6px;
         background-color: rgba(7, 7, 7, 0.5);
         border: 1px solid rgba(234, 234, 234, 0.08);
         font-size: 0.78rem;
+    }
+
+    .metric-row.mission-row {
+        background-color: rgba(250, 204, 21, 0.07);
+        border-color: rgba(250, 204, 21, 0.28);
+    }
+
+    .metric-row.highlight-row {
+        background-color: rgba(234, 234, 234, 0.07);
+        border-color: rgba(234, 234, 234, 0.2);
     }
 
     .metric-row.header-row {
@@ -518,9 +601,17 @@
     }
 
     .m-val {
+        display: flex;
+        flex-direction: column;
         color: rgba(234, 234, 234, 0.9);
         font-weight: 500;
         word-break: break-word;
+    }
+
+    .m-sub {
+        font-size: 0.65rem;
+        font-weight: 400;
+        opacity: 0.7;
     }
 
     .m-val.winner {
