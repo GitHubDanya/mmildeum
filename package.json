@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "cesium": "^1.147.0",
+    "chart.js": "^4.6.1"
+  },
+  "devDependencies": {
+    "vite-plugin-static-copy": "^4.1.1"
+  }
+}
