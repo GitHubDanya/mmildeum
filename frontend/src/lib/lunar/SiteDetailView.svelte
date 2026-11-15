@@ -19,7 +19,6 @@
     export let onCompareWith: ((site: SelectedSite) => void) | undefined = undefined;
     export let onRemove: (id: number) => void;
     export let onRetry: (site: SelectedSite) => void;
-    export let onRetrySunlightDuration: ((site: SelectedSite) => void) | undefined = undefined;
 
     $: dateEval = evaluateSiteAtTimestamp(site, selectedTimeMs);
     $: missionEndMs = selectedTimeMs + missionDurationHours * 3600 * 1000;
@@ -50,7 +49,9 @@
             {:else if typeof site.score === 'number'}
                 <span
                         class="score-badge {getScoreClass(site.score)}"
-                        title="Landing Suitability Score"
+                        title={site.updatingTelemetry
+                        ? 'Updating from API (showing fallback rescore)'
+                        : 'Landing Suitability Score'}
                 >
                     {site.score.toFixed(1)}
                 </span>
@@ -87,7 +88,7 @@
 
     {#if site.loadingScore}
         <div class="detail-status">Fetching lunar surface telemetry...</div>
-    {:else if site.scoreError}
+    {:else if site.scoreError && site.score === null}
         <div class="detail-status error-box">
             <span>Failed to load telemetry from the API.</span>
             <button class="btn btn-white" on:click={() => onRetry(site)}>Retry</button>
@@ -97,7 +98,9 @@
             <section class="wireframe-box">
                 <header class="wireframe-box-header">
                     <span>Graphs</span>
-                    {#if site.isEstimatedSunSeries}
+                    {#if site.updatingTelemetry}
+                        <span class="sync-pill">Syncing...</span>
+                    {:else if site.isEstimatedSunSeries}
                         <span
                                 class="est-pill"
                                 title="Sun graphs derived from site coordinates; visibility plotted from API windows"
@@ -149,10 +152,15 @@
             <section class="wireframe-box">
                 <header class="wireframe-box-header">
                     <span>Data points</span>
+                    {#if site.missionSunlight?.isFallback}
+                        <span class="est-pill" title="Computed via client-side rescore fallback">
+                            Fallback
+                        </span>
+                    {/if}
                 </header>
 
                 <div class="datapoints-stack">
-                    <!-- Mission sunlight from the unified site evaluation -->
+                    <!-- Mission Sunlight Duration Card -->
                     <div class="datapoint-item mission-sun-card">
                         <div class="dp-top-row">
                             <span class="dp-label">
@@ -169,21 +177,7 @@
                             {formatShortUtc(selectedTimeMs)} → {formatShortUtc(missionEndMs)} UTC
                         </span>
 
-                        {#if site.loadingMissionSunlight}
-                            <span class="dp-value muted">Calculating sunlight duration...</span>
-                        {:else if site.missionSunlightError}
-                            <div class="sun-err-row">
-                                <span class="sun-err-text">{site.missionSunlightError}</span>
-                                {#if onRetrySunlightDuration}
-                                    <button
-                                            class="mini-retry-btn"
-                                            on:click={() => onRetrySunlightDuration && onRetrySunlightDuration(site)}
-                                    >
-                                        Retry
-                                    </button>
-                                {/if}
-                            </div>
-                        {:else if site.missionSunlight}
+                        {#if site.missionSunlight}
                             <span class="dp-value sun-highlight">
                                 {site.missionSunlight.sunlitHours.toFixed(1)} hrs
                                 <small class="dp-sub">
@@ -197,21 +191,23 @@
                                 ></div>
                             </div>
                         {:else}
-                            <span class="dp-value muted">Pending interval</span>
+                            <span class="dp-value muted">Calculating...</span>
                         {/if}
                     </div>
 
-                    <div class="datapoint-item date-eval-card">
-                        <div class="dp-top-row">
-                            <span class="dp-label">Touchdown ({formatShortUtc(selectedTimeMs)} UTC)</span>
-                            <span class="status-chip {dateEval.status.toLowerCase()}">
-                                {dateEval.status}
+                    {#if site.scoringMetrics}
+                        <div class="datapoint-item date-eval-card">
+                            <div class="dp-top-row">
+                                <span class="dp-label">Outage & Endurance</span>
+                                <span class="status-chip {dateEval.status.toLowerCase()}">
+                                    {dateEval.status}
+                                </span>
+                            </div>
+                            <span class="dp-value">
+                                Max Dark: {site.scoringMetrics.longest_darkness_hours.toFixed(1)}h · Max Blackout: {site.scoringMetrics.longest_earth_blackout_hours.toFixed(1)}h
                             </span>
                         </div>
-                        <span class="dp-value">
-                            {dateEval.isEarthVisible ? 'Earth Visible' : 'Earth Occluded'} · Sun {dateEval.sunAngleDeg.toFixed(1)}°
-                        </span>
-                    </div>
+                    {/if}
 
                     {#if site.terrainType}
                         <div class="datapoint-item">
@@ -230,9 +226,14 @@
                     </div>
 
                     <div class="datapoint-item">
-                        <span class="dp-label">Ground Angle</span>
+                        <span class="dp-label">Ground Angle / P95 Slope</span>
                         <span class="dp-value">
                             {site.groundAngle !== null ? `${site.groundAngle.toFixed(2)}°` : 'N/A'}
+                            {#if site.scoringMetrics?.slope_p95_degrees !== null && site.scoringMetrics?.slope_p95_degrees !== undefined}
+                                <small class="dp-sub">
+                                    (P95: {site.scoringMetrics.slope_p95_degrees.toFixed(1)}°)
+                                </small>
+                            {/if}
                         </span>
                     </div>
 
@@ -246,17 +247,23 @@
                     </div>
 
                     <div class="datapoint-item">
-                        <span class="dp-label">Daytime Avg Sun Angle</span>
-                        <span class="dp-value">
-                            {site.daytimeAvgSunAngle !== null
-                                ? `${site.daytimeAvgSunAngle.toFixed(2)}°`
-                                : 'N/A'}
+                        <span class="dp-label">
+                            Sunlight Windows ({site.sunlightWindows.length})
                         </span>
+                        {#if site.sunlightWindows.length > 0}
+                            <ul class="windows-list sun-list">
+                                {#each site.sunlightWindows as win}
+                                    <li>{formatWindowRange(win)}</li>
+                                {/each}
+                            </ul>
+                        {:else}
+                            <span class="dp-value">None in interval</span>
+                        {/if}
                     </div>
 
                     <div class="datapoint-item">
                         <span class="dp-label">
-                            Visibility Windows ({site.visibilityWindows.length})
+                            Earth Visibility Windows ({site.visibilityWindows.length})
                         </span>
                         {#if site.visibilityWindows.length > 0}
                             <ul class="windows-list">
@@ -265,7 +272,7 @@
                                 {/each}
                             </ul>
                         {:else}
-                            <span class="dp-value">None</span>
+                            <span class="dp-value">None in interval</span>
                         {/if}
                     </div>
                 </div>
@@ -381,6 +388,15 @@
         color: rgba(234, 234, 234, 0.75);
     }
 
+    .sync-pill {
+        font-size: 0.65rem;
+        font-weight: 500;
+        padding: 0.1rem 0.45rem;
+        border-radius: 999px;
+        background-color: rgba(96, 165, 250, 0.18);
+        color: #93c5fd;
+    }
+
     .graphs-stack {
         display: flex;
         flex-direction: column;
@@ -453,29 +469,6 @@
         transition: width 0.25s ease;
     }
 
-    .sun-err-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.4rem;
-    }
-
-    .sun-err-text {
-        font-size: 0.72rem;
-        color: #fca5a5;
-    }
-
-    .mini-retry-btn {
-        background-color: rgba(234, 234, 234, 0.16);
-        color: #fff;
-        border: none;
-        border-radius: 4px;
-        padding: 0.15rem 0.45rem;
-        font-family: inherit;
-        font-size: 0.68rem;
-        cursor: pointer;
-    }
-
     .date-eval-card {
         border-color: rgba(234, 234, 234, 0.22);
         background-color: rgba(234, 234, 234, 0.07);
@@ -546,6 +539,12 @@
         border: 1px solid rgba(59, 130, 246, 0.2);
         border-radius: 5px;
         padding: 0.22rem 0.45rem;
+    }
+
+    .windows-list.sun-list li {
+        color: #fde047;
+        background-color: rgba(250, 204, 21, 0.09);
+        border-color: rgba(250, 204, 21, 0.22);
     }
 
     .detail-status {

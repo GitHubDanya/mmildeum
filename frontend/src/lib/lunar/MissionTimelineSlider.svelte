@@ -16,10 +16,14 @@
     export let missionDurationHours = 72;
     export let targetSites: SelectedSite[] = [];
     export let rightInsetPx = 0;
+    export let isLoadingData = false;
     export let onChangeTime: (ms: number) => void;
     export let onChangeDuration: (hours: number) => void;
+    export let onChangeMonth: (year: number, monthIndex: number) => void;
+    export let onAutoPickBest: (() => void) | undefined = undefined;
 
     const STEP_MS = 1 * 3600 * 1000;
+    const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const DURATION_PRESETS = [
         { label: '24h', hours: 24 },
         { label: '3d', hours: 72 },
@@ -31,8 +35,18 @@
     let isPlaying = false;
     let playInterval: ReturnType<typeof setInterval> | undefined = undefined;
 
+    $: activeDateObj = new Date(startMs);
+    $: activeYear = activeDateObj.getUTCFullYear();
+    $: activeMonthIndex = activeDateObj.getUTCMonth();
+    $: monthInputValue = `${activeYear}-${String(activeMonthIndex + 1).padStart(2, '0')}`;
+    $: activeMonthLabel = `${MONTH_SHORT[activeMonthIndex]} ${activeYear}`;
+
+    $: durationMs = Math.max(1, missionDurationHours) * 3600 * 1000;
+    // Extend the visual track by `durationMs` so late-month launches spanning into next month never clip
+    $: trackEndMs = endMs + durationMs;
     $: safeTimeMs = Math.max(startMs, Math.min(endMs, selectedTimeMs));
-    $: missionEndMs = safeTimeMs + missionDurationHours * 3600 * 1000;
+    $: missionEndMs = safeTimeMs + durationMs;
+
     $: recommendedWindows = findRecommendedLandingWindows(
         targetSites,
         startMs,
@@ -41,22 +55,24 @@
     );
 
     $: missionSpanOverlay = (() => {
-        const span = Math.max(1, endMs - startMs);
+        const span = Math.max(1, trackEndMs - startMs);
         const leftPct = Math.max(0, Math.min(100, ((safeTimeMs - startMs) / span) * 100));
         const rightPct = Math.max(leftPct, Math.min(100, ((missionEndMs - startMs) / span) * 100));
+        const monthBoundaryPct = Math.max(0, Math.min(100, ((endMs - startMs) / span) * 100));
         return {
             leftPct,
-            widthPct: Math.max(0.8, rightPct - leftPct)
+            widthPct: Math.max(0.8, rightPct - leftPct),
+            monthBoundaryPct
         };
     })();
 
     $: trackSegments = (() => {
-        const count = 62;
-        if (targetSites.length === 0 || endMs <= startMs) {
+        const count = 68;
+        if (targetSites.length === 0 || trackEndMs <= startMs) {
             return Array.from({ length: count }, () => 'neutral');
         }
 
-        const span = endMs - startMs;
+        const span = trackEndMs - startMs;
         return Array.from({ length: count }, (_, i) => {
             const t = startMs + ((i + 0.5) / count) * span;
             const evals = targetSites.map((s) => evaluateSiteAtTimestamp(s, t));
@@ -74,10 +90,30 @@
         evalData: evaluateSiteAtTimestamp(site, safeTimeMs)
     }));
 
+    function shiftMonth(delta: number) {
+        stopPlayback();
+        const shifted = new Date(Date.UTC(activeYear, activeMonthIndex + delta, 1));
+        onChangeMonth(shifted.getUTCFullYear(), shifted.getUTCMonth());
+    }
+
+    function handleMonthInput(e: Event) {
+        const raw = (e.currentTarget as HTMLInputElement).value.trim();
+        const match = raw.match(/^(\d{4})-(\d{2})$/);
+        if (!match) return;
+        const year = Number(match[1]);
+        const month = Number(match[2]) - 1;
+        if (year >= 1970 && year <= 2100 && month >= 0 && month <= 11) {
+            stopPlayback();
+            onChangeMonth(year, month);
+        }
+    }
+
     function handleRangeInput(e: Event) {
         stopPlayback();
-        const val = Number((e.currentTarget as HTMLInputElement).value);
-        onChangeTime(val);
+        const rawVal = Number((e.currentTarget as HTMLInputElement).value);
+        const clamped = Math.max(startMs, Math.min(endMs, rawVal));
+        (e.currentTarget as HTMLInputElement).value = String(clamped);
+        onChangeTime(clamped);
     }
 
     function handleCustomHoursInput(e: Event) {
@@ -134,7 +170,7 @@
 
 <div
         class="timeline-dock"
-        style="width: min(670px, calc(100vw - {rightInsetPx}px - 44px));"
+        style="width: min(690px, calc(100vw - {rightInsetPx}px - 44px));"
 >
     <div class="timeline-header">
         <div class="timeline-title-group">
@@ -143,9 +179,32 @@
             <span class="mission-end-hint" title="Mission End ({formatDurationHours(missionDurationHours)})">
                 → {formatShortUtc(missionEndMs)} UTC
             </span>
+
+            {#if isLoadingData}
+                <span class="loading-pill" role="status" aria-live="polite">
+                    <span class="spinner" aria-hidden="true"></span>
+                    Loading data...
+                </span>
+            {/if}
         </div>
 
         <div class="timeline-controls">
+            {#if targetSites.length > 0 && recommendedWindows.length > 0}
+                <button
+                        class="step-btn best-btn"
+                        on:click={() => {
+                        stopPlayback();
+                        if (onAutoPickBest) {
+                            onAutoPickBest();
+                        } else {
+                            jumpToWindow(recommendedWindows[0].peakMs);
+                        }
+                    }}
+                        title="Jump to highest-scoring landing date on timeline"
+                >
+                    ★ Auto-Best
+                </button>
+            {/if}
             <button
                     class="step-btn"
                     on:click={() => stepByHours(-12)}
@@ -172,9 +231,39 @@
         </div>
     </div>
 
-    <!-- Mission Duration Selector Bar -->
+    <!-- Launch Month & Mission Duration Selector Bar -->
     <div class="duration-row">
-        <span class="duration-label">Mission Duration:</span>
+        <div class="month-switcher" title="Select launch month/year">
+            <button
+                    class="step-btn month-nav-btn"
+                    on:click={() => shiftMonth(-1)}
+                    aria-label="Previous launch month"
+                    title="Previous launch month"
+            >
+                ◀
+            </button>
+            <label class="month-input-wrap">
+                <input
+                        class="month-input"
+                        type="month"
+                        value={monthInputValue}
+                        on:change={handleMonthInput}
+                        aria-label="Select launch year and month ({activeMonthLabel})"
+                />
+            </label>
+            <button
+                    class="step-btn month-nav-btn"
+                    on:click={() => shiftMonth(1)}
+                    aria-label="Next launch month"
+                    title="Next launch month"
+            >
+                ▶
+            </button>
+        </div>
+
+        <span class="row-divider" aria-hidden="true"></span>
+
+        <span class="duration-label">Duration:</span>
         <div class="duration-presets">
             {#each DURATION_PRESETS as preset}
                 <button
@@ -202,13 +291,27 @@
         </label>
     </div>
 
-    <!-- Track with suitability heat-map bar & active mission span overlay -->
+    <!-- Track with full-timeline suitability heat-map bar, spillover zone & active mission span overlay -->
     <div class="slider-track-wrapper">
         <div class="suitability-bar" aria-hidden="true">
             {#each trackSegments as seg}
                 <span class="suitability-seg {seg}"></span>
             {/each}
         </div>
+
+        {#if missionSpanOverlay.monthBoundaryPct < 100}
+            <div
+                    class="spillover-zone"
+                    aria-hidden="true"
+                    style="left: {missionSpanOverlay.monthBoundaryPct}%; right: 0;"
+                    title="Next-month mission spillover region"
+            ></div>
+            <div
+                    class="month-boundary-tick"
+                    aria-hidden="true"
+                    style="left: {missionSpanOverlay.monthBoundaryPct}%;"
+            ></div>
+        {/if}
 
         <div
                 class="mission-span-overlay"
@@ -220,7 +323,7 @@
                 class="date-slider"
                 type="range"
                 min={startMs}
-                max={endMs}
+                max={trackEndMs}
                 step={STEP_MS}
                 value={safeTimeMs}
                 on:input={handleRangeInput}
@@ -233,12 +336,13 @@
                 <i class="dot optimal"></i> Optimal
                 <i class="dot marginal"></i> Partial
                 <i class="dot span"></i> Mission Span
+                <span class="cutoff-hint">· Cutoff {formatShortDateOnlyUtc(endMs)}</span>
             </span>
-            <span>{formatShortDateOnlyUtc(endMs)}</span>
+            <span>{formatShortDateOnlyUtc(trackEndMs)}</span>
         </div>
     </div>
 
-    <!-- Recommended Landing Dates & Live Sunlight Duration Evaluation -->
+    <!-- Recommended Landing Dates & Live Evaluation -->
     {#if targetSites.length > 0}
         <div class="timeline-footer">
             <div class="recommended-row">
@@ -255,14 +359,14 @@
                                     class="rec-chip"
                                     class:active={isInside}
                                     on:click={() => jumpToWindow(win.peakMs)}
-                                    title="Jump to optimal start window ({win.label})"
+                                    title="Jump to optimal start window ({win.label} · Score ~{win.avgScore})"
                             >
                                 ★ {win.label}
                             </button>
                         {/each}
                     </div>
                 {:else}
-                    <span class="no-rec">No optimal overlap in range</span>
+                    <span class="no-rec">Evaluating timeline...</span>
                 {/if}
             </div>
 
@@ -275,18 +379,12 @@
                         <span class="verdict-detail">
                             {item.evalData.isEarthVisible ? 'Earth LOS' : 'No LOS'} · Sun {item.evalData.sunAngleDeg.toFixed(0)}°
                         </span>
-                        {#if item.site.loadingMissionSunlight}
-                            <span class="sun-dur-tag loading">Sunlit: ...</span>
-                        {:else if item.site.missionSunlight}
+                        {#if item.site.missionSunlight}
                             <span
                                     class="sun-dur-tag"
-                                    title="Calculated via /fetch-data for {formatDurationHours(missionDurationHours)}"
+                                    title="Sunlit hours during {formatDurationHours(missionDurationHours)} mission"
                             >
                                 ☀ {item.site.missionSunlight.sunlitHours.toFixed(1)}h ({item.site.missionSunlight.sunlitPercentage.toFixed(0)}%)
-                            </span>
-                        {:else if item.site.missionSunlightError}
-                            <span class="sun-dur-tag err" title={item.site.missionSunlightError}>
-                                ☀ N/A
                             </span>
                         {/if}
                         <span class="verdict-badge {item.evalData.status.toLowerCase()}">
@@ -326,7 +424,7 @@
 
     .timeline-title-group {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         flex-wrap: wrap;
         gap: 0.45rem;
     }
@@ -350,6 +448,34 @@
         color: #fde047;
         opacity: 0.9;
         font-variant-numeric: tabular-nums;
+    }
+
+    .loading-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.68rem;
+        font-weight: 500;
+        color: #93c5fd;
+        background-color: rgba(59, 130, 246, 0.16);
+        border: 1px solid rgba(96, 165, 250, 0.35);
+        border-radius: 999px;
+        padding: 0.1rem 0.5rem;
+    }
+
+    .spinner {
+        width: 10px;
+        height: 10px;
+        border: 1.8px solid rgba(147, 197, 253, 0.3);
+        border-top-color: #93c5fd;
+        border-radius: 50%;
+        animation: spin 0.75s linear infinite;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
     }
 
     .timeline-controls {
@@ -380,6 +506,17 @@
         cursor: not-allowed;
     }
 
+    .best-btn {
+        background-color: rgba(34, 197, 94, 0.16);
+        border-color: rgba(34, 197, 94, 0.4);
+        color: #86efac;
+        font-weight: 500;
+    }
+
+    .best-btn:hover:not(:disabled) {
+        background-color: rgba(34, 197, 94, 0.28);
+    }
+
     .play-btn {
         min-width: 26px;
         text-align: center;
@@ -389,8 +526,50 @@
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: 0.4rem;
-        padding: 0.25rem 0;
+        gap: 0.38rem;
+        padding: 0.22rem 0;
+    }
+
+    .month-switcher {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.22rem;
+    }
+
+    .month-nav-btn {
+        padding: 0.16rem 0.36rem;
+        font-size: 0.64rem;
+        line-height: 1.2;
+    }
+
+    .month-input-wrap {
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .month-input {
+        background-color: #0d0d0d;
+        color: #fff;
+        border: 1px solid rgba(234, 234, 234, 0.24);
+        border-radius: 6px;
+        padding: 0.13rem 0.4rem;
+        font-family: inherit;
+        font-size: 0.7rem;
+        font-weight: 500;
+        color-scheme: dark;
+        cursor: pointer;
+    }
+
+    .month-input:focus {
+        outline: none;
+        border-color: #60a5fa;
+    }
+
+    .row-divider {
+        width: 1px;
+        height: 14px;
+        background-color: rgba(234, 234, 234, 0.16);
+        margin: 0 0.1rem;
     }
 
     .duration-label {
@@ -403,7 +582,7 @@
     .duration-presets {
         display: flex;
         align-items: center;
-        gap: 0.28rem;
+        gap: 0.25rem;
     }
 
     .dur-chip {
@@ -411,7 +590,7 @@
         color: rgba(234, 234, 234, 0.85);
         border: 1px solid rgba(234, 234, 234, 0.16);
         border-radius: 6px;
-        padding: 0.15rem 0.45rem;
+        padding: 0.15rem 0.42rem;
         font-family: inherit;
         font-size: 0.7rem;
         font-weight: 500;
@@ -440,12 +619,12 @@
     }
 
     .custom-dur-input {
-        width: 52px;
+        width: 48px;
         background-color: #0d0d0d;
         color: #fff;
         border: 1px solid rgba(234, 234, 234, 0.24);
         border-radius: 5px;
-        padding: 0.15rem 0.35rem;
+        padding: 0.15rem 0.3rem;
         font-family: inherit;
         font-size: 0.7rem;
         text-align: right;
@@ -470,6 +649,33 @@
         display: flex;
         background-color: rgba(234, 234, 234, 0.12);
         pointer-events: none;
+    }
+
+    .spillover-zone {
+        position: absolute;
+        top: 7px;
+        height: 6px;
+        border-top-right-radius: 999px;
+        border-bottom-right-radius: 999px;
+        background: repeating-linear-gradient(
+                -45deg,
+                rgba(7, 7, 7, 0.32),
+                rgba(7, 7, 7, 0.32) 3px,
+                rgba(234, 234, 234, 0.08) 3px,
+                rgba(234, 234, 234, 0.08) 6px
+        );
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    .month-boundary-tick {
+        position: absolute;
+        top: 4px;
+        width: 1.5px;
+        height: 12px;
+        background-color: rgba(234, 234, 234, 0.65);
+        pointer-events: none;
+        z-index: 1;
     }
 
     .mission-span-overlay {
@@ -559,6 +765,10 @@
         height: 6px;
         border-radius: 50%;
         margin-left: 0.3rem;
+    }
+
+    .cutoff-hint {
+        opacity: 0.85;
     }
 
     .dot.optimal {
@@ -660,16 +870,6 @@
         border-radius: 4px;
         padding: 0.05rem 0.35rem;
         font-variant-numeric: tabular-nums;
-    }
-
-    .sun-dur-tag.loading {
-        opacity: 0.65;
-    }
-
-    .sun-dur-tag.err {
-        color: #fca5a5;
-        background-color: rgba(239, 68, 68, 0.12);
-        border-color: rgba(239, 68, 68, 0.28);
     }
 
     .verdict-badge {
