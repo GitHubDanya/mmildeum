@@ -1,175 +1,171 @@
 \documentclass[10pt,a4paper]{article}
-\usepackage[a4paper,top=20mm,bottom=20mm,left=19mm,right=19mm,headheight=15pt]{geometry}
+\usepackage[a4paper,top=20mm,bottom=18mm,left=18mm,right=18mm,headheight=14pt]{geometry}
 \usepackage{fontspec}
-\setmainfont{Noto Sans}
-\setsansfont{Noto Sans}
-\setmonofont{DejaVu Sans Mono}[Scale=0.82]
+\usepackage{unicode-math}
+\setmainfont{Cambria}
+\setmathfont{Cambria Math}
+\setmonofont{Consolas}[Scale=0.82]
 \usepackage{polyglossia}
 \setdefaultlanguage{english}
 
-\usepackage{amsmath,amssymb,mathtools}
-\usepackage{array,tabularx,booktabs,longtable,multirow}
+\usepackage{array,tabularx,booktabs}
 \usepackage{microtype}
-\usepackage[dvipsnames]{xcolor}
-\usepackage{tikz}
-\usepackage[most]{tcolorbox}
 \usepackage{enumitem}
 \usepackage{fancyhdr}
 \usepackage{lastpage}
 \usepackage{titlesec}
-\usepackage[unicode,colorlinks=true,linkcolor=DeepBlue,urlcolor=DeepBlue]{hyperref}
-\definecolor{Midnight}{HTML}{15283F}
-\definecolor{DeepBlue}{HTML}{17669A}
-\definecolor{Slate}{HTML}{4D6276}
-\definecolor{Cloud}{HTML}{EFF5F8}
-\definecolor{LineGray}{HTML}{DDE7EC}
-\definecolor{Mint}{HTML}{167C76}
-\definecolor{Burnt}{HTML}{B06B23}
-\color{Midnight}
+\usepackage[hidelinks,unicode]{hyperref}
+
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{4.2pt}
-\setlist[itemize]{leftmargin=*,itemsep=2pt,topsep=3pt}
-\setlist[enumerate]{leftmargin=*,itemsep=3pt,topsep=3pt}
-\renewcommand{\arraystretch}{1.32}
-\titleformat{\section}{\Large\bfseries\color{Midnight}}{\thesection}{0.65em}{}
-\titlespacing*{\section}{0pt}{12pt}{5pt}
-\titleformat{\subsection}{\normalsize\bfseries\color{DeepBlue}}{\thesubsection}{0.6em}{}
-\titlespacing*{\subsection}{0pt}{10pt}{4pt}
-\newtcolorbox{notebox}[1][]{enhanced,breakable,colback=Cloud,colframe=LineGray,boxrule=0.6pt,arc=1.5mm,left=10pt,right=10pt,top=7pt,bottom=7pt,#1}
-\newtcolorbox{formulaBox}[1][]{enhanced,breakable,colback=Cloud,colframe=DeepBlue,boxrule=0.85pt,arc=2mm,left=11pt,right=11pt,top=10pt,bottom=9pt,#1}
-\newcommand{\term}[1]{\textbf{#1}}
-\newcommand{\tinylabel}[1]{{\footnotesize\bfseries\color{DeepBlue} #1}}
+\setlength{\parskip}{4pt}
+\setlength{\emergencystretch}{2em}
+\setlist[enumerate]{leftmargin=*,itemsep=2pt,topsep=3pt}
+\renewcommand{\arraystretch}{1.18}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcommand{\code}[1]{{\ttfamily\small #1}}
-\newcommand{\tight}{\vspace{-2pt}}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.65em}{}
+\titlespacing*{\section}{0pt}{10pt}{4pt}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titlespacing*{\subsection}{0pt}{8pt}{3pt}
+
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{\footnotesize\color{Slate}\textbf{LUNAR LANDING SITE NAVIGATOR}}
-\fancyhead[R]{\footnotesize\color{Slate} Algorithm / EN}
-\fancyfoot[L]{\footnotesize\color{Slate} Proposed scoring model  |  v1.0}
-\fancyfoot[R]{\footnotesize\color{Slate} \thepage\ / \pageref{LastPage}}
+\fancyhead[L]{\footnotesize LLSN-TN-001}
+\fancyhead[C]{\footnotesize Rev. A}
+\fancyhead[R]{\footnotesize 15 Nov 2026}
+\fancyfoot[C]{\footnotesize Page \thepage\ of \pageref{LastPage}}
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\footrulewidth}{0pt}
-\setlength{\headsep}{12pt}
+\setlength{\headsep}{10pt}
+
 \begin{document}
-{\footnotesize\bfseries\color{DeepBlue} TECHNICAL NOTE  /  MATHEMATICAL MODEL}\par\vspace{3pt}
-{\fontsize{23}{28}\selectfont\bfseries Landing-Site Suitability Score}\par\vspace{5pt}
-{\normalsize\color{Slate} Fixed-ideal TOPSIS, terrain-aware illumination, Earth visibility and feasibility constraints}\par\vspace{11pt}
-\noindent\color{DeepBlue}\rule{\linewidth}{1.15pt}\color{Midnight}
-\vspace{8pt}
 
-\begin{notebox}
-\textbf{Purpose.} Rank a lunar landing site by its solar-power opportunity, direct-to-Earth visibility and local terrain slope. The same function evaluates a site independently and compares multiple candidates \emph{without rescaling scores to the candidate set}.
+\begin{center}
+{\LARGE\bfseries Landing-Site Suitability Score\par}
+\vspace{4pt}
+{\large Fixed-Ideal TOPSIS Model for Lunar Site Screening\par}
+\vspace{10pt}
+{\normalsize MmilDeum Project Team\par}
+{\small NASA Space Apps Challenge\par}
+{\small 15 November 2026\par}
+\end{center}
 
-\textbf{Important:} this is a proposed, configurable \emph{mission suitability index}, not a NASA-approved landing-safety rating or a probability of mission success.
-\end{notebox}
+\section*{Abstract}
+This technical note defines a configurable, candidate-independent index for screening lunar landing sites using solar illumination, direct-to-Earth visibility, outage duration, and terrain slope. Five measured quantities are normalized and combined by fixed-ideal TOPSIS, while mission limits are evaluated separately as feasibility constraints. Scores are comparable across candidate sets because the ideal and anti-ideal anchors are fixed. The model supports early trade studies; it is not a flight-certification method or a probability of mission success. Mission-specific limits, weights, power margins, thermal performance, communications design, landing dynamics, navigation uncertainty, and local hazards require separate engineering analysis.
+
+\section*{Nomenclature}
+\small
+\begin{tabularx}{\linewidth}{@{}L{0.10\linewidth}Y L{0.12\linewidth}Y@{}}
+\toprule
+\textbf{Symbol} & \textbf{Definition} & \textbf{Symbol} & \textbf{Definition}\\
+\midrule
+$p$ & Candidate site $(\varphi,\lambda)$ & $[t_0,t_1]$ & Evaluation interval\\
+$T$ & Interval duration & $\Delta t$ & Sampling step\\
+$H_p(a)$ & Terrain-horizon elevation at azimuth $a$ & $u_S,u_E$ & Sun/Earth visibility indicators\\
+$I,V$ & Illuminated and Earth-visible fractions & $D,B$ & Longest darkness and Earth-blackout durations\\
+$\theta_{95}$ & 95th-percentile footprint slope & $\tau_P,\tau_C$ & Outage reference time scales\\
+$\theta_{\mathrm{ref}}$ & Slope reference scale & $z_i,w_i$ & Normalized benefits and weights\\
+$d_+,d_-$ & Distances to ideal and anti-ideal & $S(p)$ & Suitability score\\
+$\mathcal{F}(p)$ & Mission-feasibility result & $\theta_{\max},D_{\max},B_{\max}$ & Configured mission limits\\
+\bottomrule
+\end{tabularx}
+\normalsize
 
 \section{Inputs and observable quantities}
-For a candidate site $p=(\varphi,\lambda)$, mission interval $[t_0,t_1]$, duration $T=t_1-t_0$, and sampling step $\Delta t$, the scientific pipeline provides:
+For site $p$, interval $[t_0,t_1]$, and step $\Delta t$, the evaluation pipeline uses the following sources.
 
-\begin{tabularx}{\linewidth}{@{}p{0.26\linewidth} X p{0.19\linewidth}@{}}
+\small
+\begin{tabularx}{\linewidth}{@{}L{0.23\linewidth}Y L{0.20\linewidth}@{}}
 \toprule
-\textbf{Source} & \textbf{Retrieved / derived values} & \textbf{Usage}\\
+\textbf{Source} & \textbf{Retrieved or derived values} & \textbf{Use}\\
 \midrule
-JPL Horizons (via Astroquery) & Solar and terrestrial azimuth $a_{S,E}(t)$ and elevation $e_{S,E}(t)$ from the lunar observer & Visibility geometry\\
-LOLA digital elevation model & Elevation raster $z(x,y)$; slope estimated over the landing footprint & Horizon; local terrain\\
-Backend-derived quantities & Terrain horizon $H_p(a)$, lit and Earth-visible intervals, longest outages, slope percentile & Scoring inputs\\
+JPL Horizons API \cite{horizons} & Solar and terrestrial azimuth $a_{S,E}(t)$ and elevation $e_{S,E}(t)$ at the lunar observer & Visibility geometry\\
+LOLA elevation data \cite{smith2010} & Elevation raster $z(x,y)$ and slope samples over the landing footprint & Terrain horizon and slope\\
+Backend processing & $H_p(a)$, visibility intervals, outage durations, and $\theta_{95}$ & Scoring inputs and provenance\\
 \bottomrule
 \end{tabularx}
+\normalsize
 
-The \emph{absolute} elevation of the site and the geological label are not separate scoring bonuses: altitude alone does not imply a safer site, and a broad geological class is not a measured hazard indicator.
-
-The global LOLA roughness map \texttt{MAS\_225M\_16} (Rosenburg et al., 2011) reports the median absolute along-track slope at a 225\,m baseline, in degrees. The app displays it as a site descriptor in place of the former south-polar roughness classes and the DEM-based roughness estimate. The terrain term in the score and the mission slope limit both use the 95th-percentile slope within the selected landing footprint. \href{https://pgda.gsfc.nasa.gov/products/70}{NASA PGDA product documentation.}
-
-\subsection{Visibility over time}
-Let $H_p(a)$ denote the local terrain horizon angle at azimuth $a$, calculated from the DEM (including the observer height and lunar curvature). Define:
-\begin{align}
- u_S(t)&=\mathbb{1}\!\left[e_S(t)>H_p(a_S(t))\right],\\[-2pt]
- u_E(t)&=\mathbb{1}\!\left[e_E(t)>H_p(a_E(t))\right].
-\end{align}
-Both indicators are $1$ when the respective body clears the terrain horizon, and $0$ otherwise. Then
-\begin{equation}
- I=\frac{1}{T}\int_{t_0}^{t_1}u_S(t)\,dt, \qquad
- V=\frac{1}{T}\int_{t_0}^{t_1}u_E(t)\,dt .
-\end{equation}
-Here $I$ is the illuminated-time fraction and $V$ is the direct-to-Earth visible-time fraction. Compute $D$ as the \textbf{longest continuous interval with $u_S=0$}, and $B$ as the \textbf{longest continuous interval with $u_E=0$}; both use hours. Numerical sampling approximates the integrals and interval boundaries.
+Absolute elevation and geological class are retained as descriptors but do not enter the score. Elevation data instead support the terrain-horizon and footprint-slope calculations. The global LOLA product \code{MAS\_225M\_16} reports median absolute along-track slope at a 225 m baseline in degrees \cite{rosenburg2011,pgda}. It is a site descriptor and is excluded from the score and feasibility constraints.
 
 \newpage
-\section{Normalize all metrics to $[0,1]$}
-The score uses five dimensionless benefits $z_i$; higher is always better. Two exponential terms penalize long uninterrupted outages:
-\begin{formulaBox}
-\begin{align*}
- z_1 &= I, && \text{illuminated fraction},\\
- z_2 &= \exp\!\left(-\frac{D}{\tau_P}\right), && \text{darkness endurance},\\
- z_3 &= V, && \text{Earth visibility fraction},\\
- z_4 &= \exp\!\left(-\frac{B}{\tau_C}\right), && \text{communication endurance},\\
- z_5 &= \max\!\left[0,1-\left(\frac{\theta_{95}}{\theta_{\mathrm{ref}}}\right)^2\right], && \text{slope suitability}.
-\end{align*}
-\end{formulaBox}
-$\theta_{95}$ is the 95th-percentile slope over a specified landing footprint, not the slope at a single pixel. $\tau_P$ and $\tau_C$ are reference time scales shaping the scoring curve; they are \textbf{not} battery-life or radio-link guarantees. $\theta_{\mathrm{ref}}$ is a reference slope scale.
 
-\begin{tabularx}{\linewidth}{@{}p{0.31\linewidth}p{0.22\linewidth}X@{}}
-\toprule
-\textbf{Configuration} & \textbf{Illustrative default} & \textbf{Interpretation}\\
-\midrule
-$\tau_P$ & $24$ h & Darkness penalty reference\\
-$\tau_C$ & $120$ h & Earth-blackout penalty reference\\
-$\theta_{\mathrm{ref}}$ & $10^\circ$ & Slope penalty reference\\
-\bottomrule
-\end{tabularx}
-
-\begin{notebox}
-These defaults are \emph{design assumptions} for the prototype, not NASA-prescribed thresholds. For a real lander, derive limits and weights from its solar array, battery, thermal design, antenna geometry and landing-footprint dimensions.
-\end{notebox}
-
-\section{Independent overall score: fixed-ideal TOPSIS}
-Choose nonnegative weights $w_i$ with $\sum_{i=1}^{5}w_i=1$. The initial prototype weighting is:
+\section{Visibility metrics}
+Let $H_p(a)$ denote the terrain-horizon elevation at azimuth $a$, including observer height and lunar curvature. Define
+\begin{align}
+u_S(t)&=\mathbb{1}\!\left[e_S(t)>H_p(a_S(t))\right],\\
+u_E(t)&=\mathbb{1}\!\left[e_E(t)>H_p(a_E(t))\right].
+\end{align}
+The indicators equal one when the corresponding body clears the local terrain horizon. The availability fractions are
 \begin{equation}
-\boldsymbol{w}=(0.25,\ 0.20,\ 0.15,\ 0.10,\ 0.30),\qquad
+I=\frac{1}{T}\int_{t_0}^{t_1}u_S(t)\,dt,
+\qquad
+V=\frac{1}{T}\int_{t_0}^{t_1}u_E(t)\,dt.
+\end{equation}
+The quantity $D$ is the \emph{longest continuous interval} for which $u_S=0$; $B$ is defined analogously for $u_E=0$. Both are measured in hours. Numerical sampling approximates the integrals and interval boundaries.
+
+\section{Metric normalization}
+The five scoring inputs are mapped to dimensionless benefits $z_i\in[0,1]$:
+\begin{align}
+z_1 &= I, & z_2 &= \exp\!\left(-\frac{D}{\tau_P}\right),\\
+z_3 &= V, & z_4 &= \exp\!\left(-\frac{B}{\tau_C}\right),\\
+z_5 &= \max\!\left[0,1-\left(\frac{\theta_{95}}{\theta_{\mathrm{ref}}}\right)^2\right].
+\end{align}
+$\theta_{95}$ is evaluated over the selected landing footprint. The initial reference values are $\tau_P=24$ h, $\tau_C=120$ h, and $\theta_{\mathrm{ref}}=10^\circ$. These parameters shape the scoring curves and are replaced by mission-derived values when vehicle requirements are available.
+
+\section{Fixed-ideal TOPSIS score}
+Let the nonnegative weights satisfy $\sum_{i=1}^{5}w_i=1$. The initial weight vector is
+\begin{equation}
+\boldsymbol{w}=(0.25,\ 0.20,\ 0.15,\ 0.10,\ 0.30),
+\qquad
 \boldsymbol{z}=(z_1,\ldots,z_5).
 \end{equation}
-Thus sunlight fraction and longest darkness contribute $45\%$ in total; Earth visibility and blackout contribute $25\%$; terrain slope contributes $30\%$.
-
-Compare every site with the \emph{same fixed} ideal vector $\boldsymbol{1}$ and worst vector $\boldsymbol{0}$. Unlike candidate-relative TOPSIS, these anchors are independent of the candidates; adding a site cannot change an existing score:
+Illumination and darkness account for 45\% of the weight, Earth visibility and blackout for 25\%, and terrain slope for 30\%. Each site is compared with the fixed ideal $\boldsymbol{1}$ and anti-ideal $\boldsymbol{0}$:
 \begin{align}
- d_+(p)&=\sqrt{\sum_{i=1}^{5}w_i\,(1-z_i(p))^2},\\
- d_-(p)&=\sqrt{\sum_{i=1}^{5}w_i\,z_i(p)^2}.
+d_+(p)&=\sqrt{\sum_{i=1}^{5}w_i\,[1-z_i(p)]^2},\\
+d_-(p)&=\sqrt{\sum_{i=1}^{5}w_i\,z_i(p)^2}.
 \end{align}
-\begin{formulaBox}
-\centering
-{\Large $\displaystyle
-\boxed{S(p)=100\,\frac{d_-(p)}{d_+(p)+d_-(p)}}$}\par\vspace{6pt}
-$0\leq S\leq100$; $S=100$ only if all five normalized benefits equal $1$.
-\end{formulaBox}
+The suitability score is
+\begin{equation}
+\boxed{S(p)=100\,\frac{d_-(p)}{d_+(p)+d_-(p)}}.
+\label{eq:score}
+\end{equation}
+Thus $0\leq S\leq100$, and adding or removing a candidate does not alter an existing site's score.
 
+\newpage
 
-\section{Hard constraints and missing data}
-A numerical score alone must never override explicit mission safety limits. For configured maximums $\theta_{\max}$, $D_{\max}$ and $B_{\max}$, define
+\section{Constraints and data quality}
+The numerical score and mission feasibility are reported separately. For configured limits,
 \begin{equation}
 \mathcal{F}(p)=
 (\theta_{95}\leq\theta_{\max})\land
 (D\leq D_{\max})\land
-(B\leq B_{\max}) .
+(B\leq B_{\max}).
 \end{equation}
-Apply the darkness / blackout comparisons only if a mission specifies those limits. A site with $\mathcal{F}=0$ remains visible in the results but is \textbf{not recommended}. The scoring slope scale $\theta_{\mathrm{ref}}$ and the hard limit $\theta_{\max}$ can be different.
+Darkness and blackout limits are applied only when specified. A site that fails a limit remains in the result set with \code{feasible=false} and the applicable entries in \code{failed\_constraints}; feasible sites rank ahead of infeasible sites.
 
-If a required DEM area, ephemeris period or slope footprint is unavailable, return \code{insufficient\_data} instead of silently assigning zero or treating the site as safe. Report the DEM resolution, time step, evaluated footprint and data sources alongside each score.
+If DEM coverage, ephemeris coverage, or a complete slope footprint is unavailable, the result is \code{insufficient\_data}. Each result records the DEM resolution, time step, footprint dimensions, and source identifiers.
 
-\section{Comparing two sites}
-Evaluate sites $A$ and $B$ with the \textbf{same} mission dates, sample interval, footprint definition, metric weights and normalization parameters. Report
+\section{Comparison of two sites}
+Sites $A$ and $B$ are evaluated with identical mission dates, sample interval, footprint definition, weights, and normalization parameters. Report
 \begin{equation}
 \Delta S=S(A)-S(B).
 \end{equation}
-A site $A$ \emph{Pareto-dominates} $B$ if
+Site $A$ \emph{Pareto-dominates} site $B$ when
 \begin{equation}
-\left(\forall i,\ z_i(A)\geq z_i(B)\right)
-\land \left(\exists j,\ z_j(A)>z_j(B)\right).
+\bigl(\forall i,\ z_i(A)\geq z_i(B)\bigr)
+\land
+\bigl(\exists j,\ z_j(A)>z_j(B)\bigr).
 \end{equation}
-If neither site dominates, the winner depends on trade-offs and chosen mission weights. Rank feasible sites ahead of infeasible sites, regardless of their raw $S$. Small score differences should be labeled inconclusive when within measurement or modeling uncertainty.
+When neither site dominates, the preferred site depends on the selected trade-offs and feasibility status.
 
 \section{Worked example}
-For two \emph{hypothetical} sites, use the illustrative reference parameters above. Both sites are assumed to have sufficient data and satisfy the mission's separately configured hard constraints.
+Consider two hypothetical sites with complete data and no failed mission constraints.
 
 \begin{center}
+\small
 \begin{tabular}{@{}lrr@{}}
 \toprule
 \textbf{Measurement} & \textbf{Site A} & \textbf{Site B}\\
@@ -184,33 +180,52 @@ Normalized $\boldsymbol{z}$ & $(.800,.717,.450,.368,.840)$ & $(.720,.882,.630,.5
 \bottomrule
 \end{tabular}
 \end{center}
-\begin{formulaBox}
-\centering
-$\displaystyle S(A)=67.60,\qquad S(B)=68.40,\qquad\Delta S=-0.80.$\\[5pt]
-\textbf{Result:} Site B ranks slightly higher under the default weights. Neither site Pareto-dominates the other.
-\end{formulaBox}
-Site A has more total sunlight and gentler terrain. Site B has shorter darkness periods and better Earth visibility. A $0.80$-point difference is small and should not be presented as definitive without a sensitivity or uncertainty analysis.
+Evaluation of Equation~\eqref{eq:score} gives
+\begin{equation}
+S(A)=67.60,\qquad S(B)=68.40,\qquad \Delta S=-0.80.
+\end{equation}
+Site B ranks slightly higher under the initial weights, and neither site Pareto-dominates the other. Site A has greater total illumination and gentler terrain; Site B has shorter outages and better Earth visibility.
 
 \newpage
-\section{Implementation contract and verification}
-\textbf{Recommended function:} \code{score\_site(metrics, mission\_config)}. Return at least the following fields:
-\begin{notebox}
-\code{score} (0--100); \code{feasible} (boolean or null if unknown); \code{failed\_constraints} (list); \code{normalized\_metrics} ($z_1\dots z_5$); \code{model\_version}; \code{data\_quality}.
-\end{notebox}
-For \code{compare\_sites(A, B, config)}, return both independent scores, $\Delta S$, feasibility statuses and a Pareto result ($A$, $B$, or neither).
 
-\textbf{Minimum automated tests:}
+\appendix
+\section{Software interface and verification}
+The reference interface is \code{score\_site(metrics, mission\_config)}. Its result contains \code{score}, \code{feasible}, \code{failed\_constraints}, \code{normalized\_metrics}, \code{model\_version}, and \code{data\_quality}. The companion function \code{compare\_sites(A, B, config)} returns both independent scores, $\Delta S$, feasibility states, a preferred site, and Pareto dominance.
+
+Minimum verification cases are:
 \begin{enumerate}
-\item $\boldsymbol z=\boldsymbol0\Rightarrow S=0$; $\boldsymbol z=\boldsymbol1\Rightarrow S=100$.
-\item Adding another candidate never changes the score of an existing candidate.
-\item A steep but well-lit infeasible site never wins as a recommended landing site.
-\item Longer darkness or blackout (with everything else fixed) cannot improve the score.
-\item Reject invalid fractions, negative durations, nonfinite numbers, nonpositive reference scales and missing source coverage.
-\item Reproduce the worked example to within $0.01$ points.
+\item $\boldsymbol{z}=\boldsymbol{0}\Rightarrow S=0$ and $\boldsymbol{z}=\boldsymbol{1}\Rightarrow S=100$.
+\item Adding a candidate does not change an existing score.
+\item Feasibility limits take precedence over the numerical score.
+\item Increasing $D$ or $B$, with other inputs fixed, cannot improve the score.
+\item Invalid fractions, durations, scales, weights, and incomplete source coverage are rejected or reported as insufficient data.
+\item The worked example is reproduced within $0.01$ point.
 \end{enumerate}
-\textbf{Limitations.} This is a ranking model, not a landing dynamics or power-system simulation. Terrain rock abundance, crater edges within the actual landing ellipse, thermal survival, relay satellites, solar incidence on a specific panel, and navigation uncertainties need additional models before claiming mission-level safety.
 
-\vspace{5pt}
-{\footnotesize\color{Slate}\textbf{Data documentation:} \href{https://ssd.jpl.nasa.gov/horizons/}{JPL Horizons}; \href{https://docs.astropy.org/projects/astroquery/en/latest/jplhorizons/jplhorizons.html}{Astroquery Horizons}; \href{https://ode.rsl.wustl.edu/moon/}{Lunar Orbital Data Explorer (LOLA products)}. The scoring function itself is a team design proposal.}
+\section*{Revision history}
+\small
+\begin{tabularx}{\linewidth}{@{}L{0.13\linewidth}L{0.20\linewidth}Y L{0.20\linewidth}@{}}
+\toprule
+\textbf{Revision} & \textbf{Date} & \textbf{Description} & \textbf{Prepared by}\\
+\midrule
+A & 15 Nov 2026 & Initial controlled release of scoring model v1.0 & MmilDeum Project Team\\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\begin{thebibliography}{9}
+\small
+\bibitem{rosenburg2011}
+M. A. Rosenburg, O. Aharonson, J. W. Head, M. A. Kreslavsky, E. Mazarico, G. A. Neumann, D. E. Smith, M. H. Torrence, and M. T. Zuber, ``Global surface slopes and roughness of the Moon from the Lunar Orbiter Laser Altimeter,'' \emph{Journal of Geophysical Research: Planets}, vol. 116, E02001, 2011. \href{https://doi.org/10.1029/2010JE003716}{doi:10.1029/2010JE003716}.
+
+\bibitem{pgda}
+NASA Goddard Space Flight Center, Planetary Geology, Geophysics and Geochemistry Laboratory, ``Lunar slopes and Hurst exponent,'' Product 70. \url{https://pgda.gsfc.nasa.gov/products/70}, accessed 15 Nov 2026.
+
+\bibitem{horizons}
+Jet Propulsion Laboratory, Solar System Dynamics, ``Horizons System'' and ``Horizons API'' documentation. \url{https://ssd.jpl.nasa.gov/horizons/} and \url{https://ssd-api.jpl.nasa.gov/doc/horizons.html}, accessed 15 Nov 2026.
+
+\bibitem{smith2010}
+D. E. Smith et al., ``The Lunar Orbiter Laser Altimeter Investigation on the Lunar Reconnaissance Orbiter Mission,'' \emph{Space Science Reviews}, vol. 150, pp. 209--241, 2010. \href{https://doi.org/10.1007/s11214-009-9512-y}{doi:10.1007/s11214-009-9512-y}.
+\end{thebibliography}
 
 \end{document}
