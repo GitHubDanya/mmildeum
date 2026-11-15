@@ -106,11 +106,17 @@ not a guarantee of safe landing.
 
 ## API Integration
 
-`GET /api/fetch-data` derives all five required measurements over a shared
-ephemeris period and returns the independent score in `score`. The complete
-result, including normalized metrics, data quality, source coverage and
-provenance, is returned in `scoring`; the measured inputs are returned in
+`GET /api/fetch-data` accepts `mission_start`, `mission_end`, and `step`, then
+derives all five required measurements over that shared
+mission interval. Solar and Earth ephemerides use the same timestamps and
+terrain-horizon profile. The independent score is returned in `score`; the
+complete result, including normalized metrics, data quality, source coverage
+and provenance, is returned in `scoring`. The measured inputs are returned in
 `scoring_metrics`.
+
+The former `/api/sunlight-duration` route has been consolidated into this
+endpoint. Sunlight and Earth-visibility windows are returned alongside the
+score for clients that need the underlying interval data.
 
 The terrain metric is the 95th-percentile slope from 25 samples over a
 circular footprint. Its radius defaults to 250 m and can be changed with the

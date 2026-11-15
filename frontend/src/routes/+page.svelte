@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy } from 'svelte';
     import '#lib/lunar/shared.css';
-    import type { MissionSunlightMetrics, SelectedSite } from '#lib/lunar/types';
+    import type { MissionSunlightMetrics, SelectedSite } from '#lib/lunar/types.js';
     import {
         HOURS_LABELS,
         buildFallbackSeries,
@@ -9,7 +9,7 @@
         fetchSunlightDuration,
         findRecommendedLandingWindows,
         getTimelineBounds
-    } from '#lib/lunar/telemetry';
+    } from '#lib/lunar/telemetry.js';
     import LunarGlobe from '#lib/lunar/LunarGlobe.svelte';
     import SitesListView from '#lib/lunar/SitesListView.svelte';
     import SiteDetailView from '#lib/lunar/SiteDetailView.svelte';
@@ -187,7 +187,14 @@
         );
 
         try {
-            const updates = await fetchSiteTelemetry(site.rawLat, site.rawLon);
+            const missionEndMs = selectedTimeMs + missionDurationHours * 3600 * 1000;
+            const updates = await fetchSiteTelemetry(
+                site.rawLat,
+                site.rawLon,
+                selectedTimeMs,
+                missionEndMs,
+                60
+            );
             selectedSites = selectedSites.map((s) =>
                 s.id === site.id
                     ? { ...s, ...updates, loadingScore: false, scoreError: false }

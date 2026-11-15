@@ -5,7 +5,6 @@ import type {
     MissionSunlightMetrics,
     RecommendedDateWindow,
     SelectedSite,
-    SunlightDurationResponse,
     VisibilityWindow
 } from './types';
 
@@ -423,11 +422,19 @@ export function buildFallbackSeries(lat: number, lon: number, avgSunAngle: numbe
 
 export async function fetchSiteTelemetry(
     lat: number,
-    lon: number
+    lon: number,
+    missionStartMs: number,
+    missionEndMs: number,
+    stepMinutes = 60
 ): Promise<Partial<SelectedSite>> {
+    const safeEndMs = Math.max(missionEndMs, missionStartMs + 3600 * 1000);
+    const clampedStep = Math.max(1, Math.min(1440, Math.round(stepMinutes)));
     const params = new URLSearchParams({
         lat: lat.toString(),
-        long: lon.toString()
+        long: lon.toString(),
+        mission_start: new Date(missionStartMs).toISOString(),
+        mission_end: new Date(safeEndMs).toISOString(),
+        step: clampedStep.toString()
     });
 
     const response = await fetch(`${API_BASE_URL}/fetch-data?${params.toString()}`);
@@ -439,7 +446,7 @@ export async function fetchSiteTelemetry(
     const validScore =
         typeof data.score === 'number' && Number.isFinite(data.score) ? data.score : null;
 
-    const fallback = buildFallbackSeries(lat, lon, data.daytime_avg_sun_angle);
+    const fallback = buildFallbackSeries(lat, lon, null);
     const hasRealSunSeries =
         Array.isArray(data.sunlight_24h) &&
         data.sunlight_24h.length === 24 &&
@@ -487,8 +494,7 @@ export async function fetchSiteTelemetry(
         score: validScore,
         terrainType: data.terrain_type ?? null,
         terrainClassId: typeof data.terrain_class_id === 'number' ? data.terrain_class_id : null,
-        daytimeAvgSunAngle:
-            typeof data.daytime_avg_sun_angle === 'number' ? data.daytime_avg_sun_angle : null,
+        daytimeAvgSunAngle: null,
         terrainElevationM:
             typeof data.terrain_elevation_m === 'number' ? data.terrain_elevation_m : null,
         groundAngle,
@@ -506,9 +512,7 @@ export async function fetchSiteTelemetry(
     };
 }
 
-/**
- * Calls GET /sunlight-duration for a candidate lunar site across [startMs, endMs].
- */
+/** Extracts mission sunlight metrics from the unified site evaluation. */
 export async function fetchSunlightDuration(
     lat: number,
     lon: number,
@@ -525,12 +529,12 @@ export async function fetchSunlightDuration(
     const params = new URLSearchParams({
         lat: lat.toString(),
         long: lon.toString(),
-        start: startIso,
-        end: endIso,
-        step_minutes: clampedStep.toString()
+        mission_start: startIso,
+        mission_end: endIso,
+        step: clampedStep.toString()
     });
 
-    const response = await fetch(`${API_BASE_URL}/sunlight-duration?${params.toString()}`, {
+    const response = await fetch(`${API_BASE_URL}/fetch-data?${params.toString()}`, {
         signal
     });
 
@@ -547,72 +551,21 @@ export async function fetchSunlightDuration(
         throw new Error(detail);
     }
 
-    const data: SunlightDurationResponse = await response.json();
-
-    const fallbackMissionHours = (safeEndMs - startMs) / (3600 * 1000);
-    const missionHours =
-        firstFiniteNumber(data.total_duration_hours, data.interval_hours, data.total_hours) ??
-        fallbackMissionHours;
-
+    const data: FetchDataResponse = await response.json();
+    const missionHours = (safeEndMs - startMs) / (3600 * 1000);
     const resolvedStep = firstFiniteNumber(data.step_minutes) ?? clampedStep;
-    const sampleCount = firstFiniteNumber(data.total_samples, data.sample_count);
-    const sunlitSampleCount = firstFiniteNumber(data.sunlit_samples, data.sunlight_samples);
-
-    const directHours = firstFiniteNumber(
-        data.sunlight_duration_hours,
-        data.average_sunlight_duration_hours,
-        data.avg_sunlight_duration_hours,
-        data.total_sunlight_hours,
-        data.sunlight_hours,
-        data.duration_hours
+    const sampleCount = firstFiniteNumber(data.scoring?.metadata?.sample_count);
+    const sunlightFraction = firstFiniteNumber(
+        data.scoring_metrics?.sunlight_fraction
     );
-
-    const directMinutes = firstFiniteNumber(
-        data.sunlight_duration_minutes,
-        data.sunlight_minutes,
-        data.duration_minutes
-    );
-
-    const directSeconds = firstFiniteNumber(
-        data.sunlight_duration_seconds,
-        data.sunlight_seconds
-    );
-
-    const directPct = firstFiniteNumber(
-        data.sunlight_percentage,
-        data.sunlit_percentage,
-        data.sunlight_percent
-    );
-
-    const directFraction = firstFiniteNumber(
-        data.sunlight_fraction,
-        data.sunlit_fraction,
-        data.sunlight_ratio
-    );
-
-    let sunlitHours = 0;
-    if (directHours !== null) {
-        sunlitHours = directHours;
-    } else if (directMinutes !== null) {
-        sunlitHours = directMinutes / 60;
-    } else if (directSeconds !== null) {
-        sunlitHours = directSeconds / 3600;
-    } else if (directPct !== null) {
-        sunlitHours = (directPct / 100) * missionHours;
-    } else if (directFraction !== null) {
-        sunlitHours = directFraction * missionHours;
-    } else if (sunlitSampleCount !== null) {
-        sunlitHours = (sunlitSampleCount * resolvedStep) / 60;
+    if (sunlightFraction === null) {
+        throw new Error('Solar ephemeris data is unavailable for this interval');
     }
 
-    const sunlitPercentage =
-        directPct !== null
-            ? directPct
-            : directFraction !== null
-                ? directFraction * 100
-                : missionHours > 0
-                    ? (sunlitHours / missionHours) * 100
-                    : 0;
+    const sunlitHours = sunlightFraction * missionHours;
+    const sunlitPercentage = sunlightFraction * 100;
+    const sunlitSampleCount =
+        sampleCount === null ? null : Math.round(sampleCount * sunlightFraction);
 
     return {
         startIso,

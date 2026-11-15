@@ -254,7 +254,7 @@
                     <span style="color: {COLOR_B};">{siteB.name}</span>
                 </div>
 
-                <!-- Mission Sunlight Duration Row (/sunlight-duration) -->
+                <!-- Mission sunlight from the unified site evaluation -->
                 <div class="metric-row mission-row">
                     <span class="m-label">
                         Mission Sun ({formatDurationHours(missionDurationHours)})

@@ -3,88 +3,25 @@
 import csv
 import io
 import re
-from datetime import datetime, timedelta, timezone
-from math import isclose, isfinite
+from datetime import datetime, timedelta
+from math import isfinite
 from typing import Any, Mapping
 
 import requests
 
+from app.services.evaluation import state_windows, validate_interval
 from app.services.terrain_horizon import get_terrain_horizon, is_body_visible
 
 
 HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons.api"
-# Limit the number of Horizons epochs to control response size and request cost.
-# This is an operational safeguard, not a scientific accuracy threshold.
-MAX_SAMPLES = 3000
+
 
 class SunlightDataUnavailable(RuntimeError):
     """Signal that usable solar ephemeris data could not be obtained."""
 
 
-def _validate_interval(
-    start_time: datetime,
-    end_time: datetime,
-    step_minutes: int,
-) -> tuple[datetime, datetime, int]:
-    """Validate the mission interval and sampling frequency.
-
-    Args:
-        start_time: Requested interval start with a timezone.
-        end_time: Requested interval end with a timezone.
-        step_minutes: Interval width in minutes.
-
-    Returns:
-        Normalized UTC start, UTC end, and interval count.
-    """
-    if not isinstance(start_time, datetime) or not isinstance(end_time, datetime):
-        raise ValueError("start_time and end_time must be datetime values")
-
-    if start_time.utcoffset() is None or end_time.utcoffset() is None:
-        raise ValueError("start_time and end_time must include a timezone")
-
-    if not isinstance(step_minutes, int) or isinstance(step_minutes, bool):
-        raise ValueError("step_minutes must be a positive integer")
-
-    if not 1 <= step_minutes <= 1440:
-        raise ValueError("step_minutes must be between 1 and 1440")
-
-    start = start_time.astimezone(timezone.utc)
-    end = end_time.astimezone(timezone.utc)
-    duration_seconds = (end - start).total_seconds()
-    step_seconds = step_minutes * 60
-
-    if duration_seconds <= 0:
-        raise ValueError("end_time must be later than start_time")
-
-    count = round(duration_seconds / step_seconds)
-
-    if not isclose(
-    duration_seconds,
-    count * step_seconds,
-    rel_tol=0.0,
-    abs_tol=1e-6,
-    ):
-        raise ValueError(
-            "The interval duration must be divisible by step_minutes"
-        )
-
-    if count < 1 or count > MAX_SAMPLES:
-        raise ValueError(
-            f"The interval must contain between 1 and {MAX_SAMPLES} samples"
-        )
-
-    return start, end, count
-
-
-def _horizons_positions(
-    lat: float,
-    lon: float,
-    start: datetime,
-    step_minutes: int,
-    count: int,
-) -> list[tuple[float, float]]:
+def _horizons_positions(lat: float, lon: float, start: datetime, step_minutes: int, count: int,) -> list[tuple[float, float]]:
     """Fetch solar azimuth and elevation from JPL Horizons.
-
     Args:
         lat: Selenographic latitude.
         lon: East-positive longitude.
@@ -210,46 +147,6 @@ def _horizons_positions(
     return positions
 
 
-def _sunlight_windows(
-    states: list[bool],
-    start: datetime,
-    step_minutes: int,
-    target: bool,
-) -> list[dict[str, str]]:
-    """Group consecutive visibility states into time windows.
-
-    Args:
-        states: Complete list of binary sunlight visibility samples.
-        start: Mission start in UTC.
-        step_minutes: Length of an individual interval.
-        target: True for illuminated windows, False for dark windows.
-
-    Returns:
-        Ordered start/end ISO-8601 pairs representing estimated windows.
-    """
-    windows = []
-    opened_at = None
-
-    for index, state in enumerate([*states, None]):
-        boundary = start + timedelta(
-            minutes=index * step_minutes
-        )
-
-        if state is target and opened_at is None:
-            opened_at = boundary
-
-        elif state is not target and opened_at is not None:
-            windows.append(
-                dict(
-                    start=opened_at.isoformat(),
-                    end=boundary.isoformat(),
-                )
-            )
-            opened_at = None
-
-    return windows
-
-
 def get_average_duration_of_sunlight(
     lat: float,
     lon: float,
@@ -294,7 +191,7 @@ def get_average_duration_of_sunlight(
             "and longitude in [-180, 360]"
         )
 
-    start, end, count = _validate_interval(
+    start, end, count = validate_interval(
         start_time,
         end_time,
         step_minutes,
@@ -353,7 +250,7 @@ def get_average_duration_of_sunlight(
 
     fraction = sum(visible_states) / count
 
-    darkness_windows = _sunlight_windows(
+    darkness_windows = state_windows(
         visible_states,
         start,
         step_minutes,
@@ -377,7 +274,7 @@ def get_average_duration_of_sunlight(
         total_sunlight_hours=sunlight_hours,
         average_sunlight_hours_per_24h=24.0 * fraction,
         longest_darkness_hours=longest_darkness,
-        sunlight_windows=_sunlight_windows(
+        sunlight_windows=state_windows(
             visible_states,
             start,
             step_minutes,

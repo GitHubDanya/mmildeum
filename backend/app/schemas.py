@@ -16,10 +16,18 @@ class ScoringResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class VisibilityWindow(BaseModel):
+    start: datetime
+    end: datetime
+
+
 class FetchDataResponse(BaseModel):
-    daytime_avg_sun_angle: float | None = None
+    mission_start: datetime
+    mission_end: datetime
+    step_minutes: int
+    sunlight_windows: list[VisibilityWindow] | None = None
+    visibility_windows: list[VisibilityWindow] | None = None
     terrain_elevation_m: float | None = None
-    visibility_windows: list | None = None
     ground_angle_deg: float | None = None
     lola_roughness_deg: float | None = Field(
         default=None,
@@ -33,29 +41,3 @@ class FetchDataResponse(BaseModel):
     )
     scoring_metrics: dict[str, float | None] = Field(default_factory=dict)
     scoring: ScoringResult
-
-
-class SunlightWindow(BaseModel):
-    start: datetime
-    end: datetime
-
-
-class SunlightDurationResponse(BaseModel):
-    latitude: float
-    longitude: float
-    start_time: datetime
-    end_time: datetime
-    step_minutes: int
-    sample_count: int
-    unknown_samples: int
-
-    sunlight_fraction: float | None
-    sunlight_percentage: float | None
-    total_sunlight_hours: float | None
-    average_sunlight_hours_per_24h: float | None
-    longest_darkness_hours: float | None
-
-    sunlight_windows: list[SunlightWindow] | None
-
-    data_quality: str
-    horizon_data_quality: str | None
