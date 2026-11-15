@@ -1,4 +1,5 @@
 <script lang="ts">
+    import scoringPdf from '../../../docs/Lunar_Landing_Site_Scoring_EN.pdf';
     import { onDestroy } from 'svelte';
     import '#lib/lunar/shared.css';
     import type { HistoricalLandingSite, SelectedSite } from '#lib/lunar/types';
@@ -645,8 +646,13 @@
 </div>
 
 <div class="top-bar">
-    <button class="btn btn-white">Our Scoring Algorithm</button>
-    {#if isViewingEarth}
+    <a
+            href={scoringPdf}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn-white doc-link">
+        Our Scoring Algorithm
+    </a>    {#if isViewingEarth}
         <button class="btn btn-moon" on:click={() => globe?.flyToMoon()}>
             ← Back to Moon
         </button>
@@ -830,6 +836,12 @@
         border-top-color: #93c5fd;
         border-radius: 50%;
         animation: top-spin 0.75s linear infinite;
+    }
+
+    .doc-link {
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
     }
 
     @keyframes top-spin {
