@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy } from 'svelte';
     import '#lib/lunar/shared.css';
-    import type { SelectedSite } from '#lib/lunar/types';
+    import type { HistoricalLandingSite, SelectedSite } from '#lib/lunar/types';
     import {
         DEFAULT_TIMELINE_START_MS,
         HOURS_LABELS,
@@ -13,14 +13,21 @@
         findRecommendedLandingWindows,
         getMonthBounds
     } from '#lib/lunar/telemetry';
+    import {
+        DEFAULT_PRESET_LANDING_SITES,
+        HISTORICAL_LANDING_SITES
+    } from '#lib/lunar/historicalSites';
     import LunarGlobe from '#lib/lunar/LunarGlobe.svelte';
     import SitesListView from '#lib/lunar/SitesListView.svelte';
     import SiteDetailView from '#lib/lunar/SiteDetailView.svelte';
     import SiteCompareView from '#lib/lunar/SiteCompareView.svelte';
     import MissionTimelineSlider from '#lib/lunar/MissionTimelineSlider.svelte';
+    import HistoricalSiteSearch from '#lib/lunar/HistoricalSiteSearch.svelte';
 
     let globe: LunarGlobe;
     let isViewingEarth = false;
+    let isMenuOpen = true;
+    let isTimelineOpen = true;
     let selectedSites: SelectedSite[] = [];
     let activeSiteId: number | null = null;
     let comparePairIds: [number, number] | null = null;
@@ -65,7 +72,6 @@
         selectedTimeMs = timelineBounds.endMs;
     }
 
-    // Automatically detect landing time or mission duration changes and query `/fetch-data` for every site
     $: currentWindowKey = `${selectedTimeMs}|${missionDurationHours}`;
     $: if (currentWindowKey !== lastScheduledWindowKey) {
         lastScheduledWindowKey = currentWindowKey;
@@ -84,6 +90,7 @@
         ? Math.min(viewportWidth * 0.65, 1040)
         : viewportWidth * 0.4;
     $: rightInsetPx = Math.max(0, menuWidthPx - viewportWidth * 0.08);
+    $: effectiveRightInsetPx = isMenuOpen ? rightInsetPx : 0;
 
     function buildTelemetryCacheKey(
         lat: number,
@@ -92,6 +99,64 @@
         durationHours: number
     ): string {
         return `${lat.toFixed(5)}_${lon.toFixed(5)}_${startMs}_${durationHours}`;
+    }
+
+    function createSiteRecord(params: {
+        lat: number;
+        lon: number;
+        alt?: number;
+        customName?: string;
+        historicalId?: string;
+        historicalSubtitle?: string;
+    }): SelectedSite {
+        const id = nextSiteId++;
+        const alt = params.alt ?? 0;
+        const fallback = buildFallbackSeries(params.lat, params.lon, null);
+
+        return {
+            id,
+            historicalId: params.historicalId,
+            historicalSubtitle: params.historicalSubtitle,
+            name: params.customName ?? `Site #${id}`,
+            lat: params.lat.toFixed(3),
+            lon: params.lon.toFixed(3),
+            alt: alt.toFixed(1),
+            rawLat: params.lat,
+            rawLon: params.lon,
+            rawAlt: alt,
+            score: null,
+            rescoreResult: null,
+            scoringMetrics: null,
+            scoringBlock: null,
+            terrainType: null,
+            terrainClassId: null,
+            daytimeAvgSunAngle: null,
+            terrainElevationM: null,
+            groundAngle: null,
+            lolaRoughnessDeg: null,
+            slopeSuitability: 0.5,
+            visibilityWindows: [],
+            sunlightWindows: [],
+            timelineVisibilityWindows: [],
+            timelineSunlightWindows: [],
+            hasTimelineBlockData: false,
+            hasRealSunlightWindows: false,
+            visibilityCoveragePct: null,
+            visibilitySeries: fallback.earthVisibility24h,
+            visibilityLabels: HOURS_LABELS,
+            hasRealVisibility: false,
+            peakSunlight: null,
+            peakValue: null,
+            sunlight24h: fallback.sunlight24h,
+            sunlightAngle24h: fallback.sunlightAngle24h,
+            isEstimatedSunSeries: true,
+            loadingScore: true,
+            updatingTelemetry: false,
+            scoreError: false,
+            missionSunlight: null,
+            loadingMissionSunlight: false,
+            missionSunlightError: null
+        };
     }
 
     function autoPickBestTimelineWindow(
@@ -314,59 +379,63 @@
     }
 
     function handleAddSite({ lat, lon, alt }: { lat: number; lon: number; alt: number }) {
-        const id = nextSiteId++;
-        const fallback = buildFallbackSeries(lat, lon, null);
+        const newSite = createSiteRecord({ lat, lon, alt });
+        selectedSites = [...selectedSites, newSite];
 
-        const newSite: SelectedSite = {
-            id,
-            name: `Site #${id}`,
-            lat: lat.toFixed(3),
-            lon: lon.toFixed(3),
-            alt: alt.toFixed(1),
-            rawLat: lat,
-            rawLon: lon,
-            rawAlt: alt,
-            score: null,
-            rescoreResult: null,
-            scoringMetrics: null,
-            scoringBlock: null,
-            terrainType: null,
-            terrainClassId: null,
-            daytimeAvgSunAngle: null,
-            terrainElevationM: null,
-            groundAngle: null,
-            lolaRoughnessDeg: null,
-            slopeSuitability: 0.5,
-            visibilityWindows: [],
-            sunlightWindows: [],
-            timelineVisibilityWindows: [],
-            timelineSunlightWindows: [],
-            hasTimelineBlockData: false,
-            hasRealSunlightWindows: false,
-            visibilityCoveragePct: null,
-            visibilitySeries: fallback.earthVisibility24h,
-            visibilityLabels: HOURS_LABELS,
-            hasRealVisibility: false,
-            peakSunlight: null,
-            peakValue: null,
-            sunlight24h: fallback.sunlight24h,
-            sunlightAngle24h: fallback.sunlightAngle24h,
-            isEstimatedSunSeries: true,
-            loadingScore: true,
-            updatingTelemetry: false,
-            scoreError: false,
-            missionSunlight: null,
-            loadingMissionSunlight: false,
-            missionSunlightError: null
-        };
+        if (activeSiteId !== null) {
+            activeSiteId = newSite.id;
+        }
+
+        initializeSiteFullTimeline(newSite, timelineBounds);
+    }
+
+    function handleSelectHistoricalSite(histSite: HistoricalLandingSite) {
+        isMenuOpen = true;
+
+        const existing = selectedSites.find((s) => s.historicalId === histSite.id);
+        if (existing) {
+            handleSelectSite(existing);
+            return;
+        }
+
+        const newSite = createSiteRecord({
+            lat: histSite.lat,
+            lon: histSite.lon,
+            alt: histSite.alt ?? 0,
+            customName: histSite.name,
+            historicalId: histSite.id,
+            historicalSubtitle: `${histSite.region} (${histSite.year})`
+        });
 
         selectedSites = [...selectedSites, newSite];
 
         if (activeSiteId !== null) {
-            activeSiteId = id;
+            activeSiteId = newSite.id;
         }
 
+        globe?.flyToSite(newSite);
         initializeSiteFullTimeline(newSite, timelineBounds);
+    }
+
+    function handlePreloadDefaultSites() {
+        if (selectedSites.length > 0) return;
+
+        const created = DEFAULT_PRESET_LANDING_SITES.map((preset) =>
+            createSiteRecord({
+                lat: preset.lat,
+                lon: preset.lon,
+                alt: preset.alt ?? 0,
+                customName: preset.name,
+                historicalId: preset.id,
+                historicalSubtitle: `${preset.region} (${preset.year})`
+            })
+        );
+
+        selectedSites = created;
+
+        for (const site of created) {
+            initializeSiteFullTimeline(site, timelineBounds);
+        }
     }
 
     function handleMonthChange(year: number, monthIndex: number) {
@@ -397,6 +466,7 @@
     }
 
     function handleSelectSite(site: SelectedSite) {
+        isMenuOpen = true;
         comparePairIds = null;
         activeSiteId = site.id;
         globe?.flyToSite(site);
@@ -405,6 +475,8 @@
     function handleSelectSiteById(siteId: number) {
         const found = selectedSites.find((s) => s.id === siteId);
         if (!found) return;
+
+        isMenuOpen = true;
 
         if (comparePairIds && comparePairIds.includes(siteId)) {
             globe?.flyToSite(found);
@@ -492,13 +564,34 @@
         bind:isViewingEarth
         sites={selectedSites}
         {highlightedSiteIds}
-        {rightInsetPx}
+        rightInsetPx={effectiveRightInsetPx}
         {selectedTimeMs}
+        historicalSites={HISTORICAL_LANDING_SITES}
         onAddSite={handleAddSite}
         onSelectSite={handleSelectSiteById}
+        onSelectHistoricalSite={handleSelectHistoricalSite}
 />
 
-<div class="menu" class:expanded={isExpanded}>
+<button
+        class="btn menu-toggle-btn"
+        on:click={() => (isMenuOpen = !isMenuOpen)}
+        aria-expanded={isMenuOpen}
+        aria-label={isMenuOpen ? 'Collapse side panel' : 'Open side panel'}
+        title={isMenuOpen ? 'Hide side panel' : 'Show side panel'}
+>
+    {#if isMenuOpen}
+        Hide Panel ▸
+    {:else}
+        ◂ {selectedSites.length > 0 ? `Sites (${selectedSites.length})` : 'Open Panel'}
+    {/if}
+</button>
+
+<div
+        class="menu"
+        class:expanded={isExpanded}
+        class:collapsed={!isMenuOpen}
+        aria-hidden={!isMenuOpen}
+>
     <h1 style="margin-top: 6vh;">Lunar Landing Site Navigator</h1>
 
     {#if compareSites}
@@ -534,9 +627,20 @@
                 onCompare={handleStartCompare}
                 onRemove={handleRemoveSite}
                 onClearAll={handleClearAll}
+                onSelectHistoricalSite={handleSelectHistoricalSite}
         />
     {:else}
-        <p class="hint">Click anywhere on the lunar surface to add candidate landing sites.</p>
+        <div class="empty-state-box">
+            <p class="hint">
+                Click anywhere on the lunar surface, click a soft reference marker, or search past missions below.
+            </p>
+            <HistoricalSiteSearch
+                    existingSites={selectedSites}
+                    showPreloadButton={true}
+                    onSelectHistoricalSite={handleSelectHistoricalSite}
+                    onPreloadDefaults={handlePreloadDefaultSites}
+            />
+        </div>
     {/if}
 </div>
 
@@ -565,12 +669,14 @@
 </div>
 
 <MissionTimelineSlider
+        bind:isOpen={isTimelineOpen}
         startMs={timelineBounds.startMs}
         endMs={timelineBounds.endMs}
         {selectedTimeMs}
         {missionDurationHours}
         targetSites={timelineTargetSites}
-        {rightInsetPx}
+        rightInsetPx={effectiveRightInsetPx}
+        isCompact={isExpanded && isMenuOpen}
         {isLoadingData}
         onChangeTime={handleTimelineChange}
         onChangeDuration={handleDurationChange}
@@ -600,6 +706,26 @@
         margin-bottom: 1.25rem;
     }
 
+    .menu-toggle-btn {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 20;
+        background-color: rgba(14, 14, 18, 0.88);
+        backdrop-filter: blur(8px);
+        color: #eaeaea;
+        border: 1px solid rgba(234, 234, 234, 0.28);
+        padding: 0.35rem 0.75rem;
+        font-family: inherit;
+        transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+    }
+
+    .menu-toggle-btn:hover {
+        background-color: rgba(34, 34, 42, 0.95);
+        border-color: rgba(234, 234, 234, 0.55);
+        opacity: 1;
+    }
+
     .menu {
         position: absolute;
         box-sizing: border-box;
@@ -614,7 +740,11 @@
         background: linear-gradient(to right, rgba(7, 7, 7, 0) 0%, #070707 8vw);
         pointer-events: none;
         z-index: 5;
-        transition: width 0.25s ease, padding-left 0.25s ease;
+        transition:
+                width 0.25s ease,
+                padding-left 0.25s ease,
+                transform 0.25s ease,
+                opacity 0.2s ease;
     }
 
     .menu.expanded {
@@ -623,10 +753,29 @@
         padding-left: 14vw;
     }
 
+    .menu.collapsed {
+        transform: translateX(100%);
+        opacity: 0;
+        pointer-events: none !important;
+    }
+
+    .menu.collapsed :global(*) {
+        pointer-events: none !important;
+    }
+
+    .empty-state-box {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        pointer-events: auto;
+    }
+
     .hint {
         text-align: center;
-        opacity: 0.7;
-        font-size: 0.9rem;
+        opacity: 0.75;
+        font-size: 0.86rem;
+        line-height: 1.4;
+        margin: 0;
     }
 
     .top-bar {

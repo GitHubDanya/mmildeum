@@ -16,6 +16,8 @@
     export let missionDurationHours = 72;
     export let targetSites: SelectedSite[] = [];
     export let rightInsetPx = 0;
+    export let isCompact = false;
+    export let isOpen = true;
     export let isLoadingData = false;
     export let onChangeTime: (ms: number) => void;
     export let onChangeDuration: (hours: number) => void;
@@ -35,17 +37,17 @@
     let isPlaying = false;
     let playInterval: ReturnType<typeof setInterval> | undefined = undefined;
 
-    $: activeDateObj = new Date(startMs);
-    $: activeYear = activeDateObj.getUTCFullYear();
-    $: activeMonthIndex = activeDateObj.getUTCMonth();
-    $: monthInputValue = `${activeYear}-${String(activeMonthIndex + 1).padStart(2, '0')}`;
+    $: activeDateObj = new Date(startMs);$: activeYear = activeDateObj.getUTCFullYear();
+    $: activeMonthIndex = activeDateObj.getUTCMonth();$: monthInputValue = `${activeYear}-${String(activeMonthIndex + 1).padStart(2, '0')}`;
     $: activeMonthLabel = `${MONTH_SHORT[activeMonthIndex]} ${activeYear}`;
 
     $: durationMs = Math.max(1, missionDurationHours) * 3600 * 1000;
-    // Extend the visual track by `durationMs` so late-month launches spanning into next month never clip
     $: trackEndMs = endMs + durationMs;
-    $: safeTimeMs = Math.max(startMs, Math.min(endMs, selectedTimeMs));
-    $: missionEndMs = safeTimeMs + durationMs;
+    $: safeTimeMs = Math.max(startMs, Math.min(endMs, selectedTimeMs));$: missionEndMs = safeTimeMs + durationMs;
+
+    $: dockWidthCss = isCompact
+        ? `min(690px, calc(100vw - ${rightInsetPx}px - 44px))`
+        : `calc(100vw - ${rightInsetPx}px - ${rightInsetPx > 0 ? 44 : 40}px)`;
 
     $: recommendedWindows = findRecommendedLandingWindows(
         targetSites,
@@ -67,7 +69,7 @@
     })();
 
     $: trackSegments = (() => {
-        const count = 68;
+        const count = 84;
         if (targetSites.length === 0 || trackEndMs <= startMs) {
             return Array.from({ length: count }, () => 'neutral');
         }
@@ -89,6 +91,13 @@
         accentColor: targetSites.length > 1 ? (idx === 0 ? '#facc15' : '#38bdf8') : '#eaeaea',
         evalData: evaluateSiteAtTimestamp(site, safeTimeMs)
     }));
+
+    function toggleTimelineOpen() {
+        if (isOpen) {
+            stopPlayback();
+        }
+        isOpen = !isOpen;
+    }
 
     function shiftMonth(delta: number) {
         stopPlayback();
@@ -168,234 +177,263 @@
     });
 </script>
 
-<div
-        class="timeline-dock"
-        style="width: min(690px, calc(100vw - {rightInsetPx}px - 44px));"
->
-    <div class="timeline-header">
-        <div class="timeline-title-group">
-            <span class="timeline-label">Landing</span>
-            <strong class="timeline-current-date">{formatFullUtc(safeTimeMs)}</strong>
-            <span class="mission-end-hint" title="Mission End ({formatDurationHours(missionDurationHours)})">
-                → {formatShortUtc(missionEndMs)} UTC
-            </span>
-
-            {#if isLoadingData}
-                <span class="loading-pill" role="status" aria-live="polite">
-                    <span class="spinner" aria-hidden="true"></span>
-                    Loading data...
+{#if isOpen}
+    <div
+            class="timeline-dock"
+            style="width: {dockWidthCss};"
+    >
+        <div class="timeline-header">
+            <div class="timeline-title-group">
+                <span class="timeline-label">Landing</span>
+                <strong class="timeline-current-date">{formatFullUtc(safeTimeMs)}</strong>
+                <span class="mission-end-hint" title="Mission End ({formatDurationHours(missionDurationHours)})">
+                    → {formatShortUtc(missionEndMs)} UTC
                 </span>
-            {/if}
-        </div>
 
-        <div class="timeline-controls">
-            {#if targetSites.length > 0 && recommendedWindows.length > 0}
-                <button
-                        class="step-btn best-btn"
-                        on:click={() => {
-                        stopPlayback();
-                        if (onAutoPickBest) {
-                            onAutoPickBest();
-                        } else {
-                            jumpToWindow(recommendedWindows[0].peakMs);
-                        }
-                    }}
-                        title="Jump to highest-scoring landing date on timeline"
-                >
-                    ★ Auto-Best
-                </button>
-            {/if}
-            <button
-                    class="step-btn"
-                    on:click={() => stepByHours(-12)}
-                    disabled={safeTimeMs <= startMs}
-                    title="Back 12 hours"
-            >
-                -12h
-            </button>
-            <button
-                    class="step-btn play-btn"
-                    on:click={togglePlay}
-                    title={isPlaying ? 'Pause timeline' : 'Scrub through dates'}
-            >
-                {isPlaying ? '❚❚' : '▶'}
-            </button>
-            <button
-                    class="step-btn"
-                    on:click={() => stepByHours(12)}
-                    disabled={safeTimeMs >= endMs}
-                    title="Forward 12 hours"
-            >
-                +12h
-            </button>
-        </div>
-    </div>
-
-    <!-- Launch Month & Mission Duration Selector Bar -->
-    <div class="duration-row">
-        <div class="month-switcher" title="Select launch month/year">
-            <button
-                    class="step-btn month-nav-btn"
-                    on:click={() => shiftMonth(-1)}
-                    aria-label="Previous launch month"
-                    title="Previous launch month"
-            >
-                ◀
-            </button>
-            <label class="month-input-wrap">
-                <input
-                        class="month-input"
-                        type="month"
-                        value={monthInputValue}
-                        on:change={handleMonthInput}
-                        aria-label="Select launch year and month ({activeMonthLabel})"
-                />
-            </label>
-            <button
-                    class="step-btn month-nav-btn"
-                    on:click={() => shiftMonth(1)}
-                    aria-label="Next launch month"
-                    title="Next launch month"
-            >
-                ▶
-            </button>
-        </div>
-
-        <span class="row-divider" aria-hidden="true"></span>
-
-        <span class="duration-label">Duration:</span>
-        <div class="duration-presets">
-            {#each DURATION_PRESETS as preset}
-                <button
-                        class="dur-chip"
-                        class:active={missionDurationHours === preset.hours}
-                        on:click={() => onChangeDuration(preset.hours)}
-                >
-                    {preset.label}
-                </button>
-            {/each}
-        </div>
-
-        <label class="custom-dur-wrap" title="Custom mission duration in hours (1–720h)">
-            <input
-                    class="custom-dur-input"
-                    type="number"
-                    min="1"
-                    max="720"
-                    step="1"
-                    value={missionDurationHours}
-                    on:change={handleCustomHoursInput}
-                    aria-label="Mission duration in hours"
-            />
-            <span>hrs</span>
-        </label>
-    </div>
-
-    <!-- Track with full-timeline suitability heat-map bar, spillover zone & active mission span overlay -->
-    <div class="slider-track-wrapper">
-        <div class="suitability-bar" aria-hidden="true">
-            {#each trackSegments as seg}
-                <span class="suitability-seg {seg}"></span>
-            {/each}
-        </div>
-
-        {#if missionSpanOverlay.monthBoundaryPct < 100}
-            <div
-                    class="spillover-zone"
-                    aria-hidden="true"
-                    style="left: {missionSpanOverlay.monthBoundaryPct}%; right: 0;"
-                    title="Next-month mission spillover region"
-            ></div>
-            <div
-                    class="month-boundary-tick"
-                    aria-hidden="true"
-                    style="left: {missionSpanOverlay.monthBoundaryPct}%;"
-            ></div>
-        {/if}
-
-        <div
-                class="mission-span-overlay"
-                aria-hidden="true"
-                style="left: {missionSpanOverlay.leftPct}%; width: {missionSpanOverlay.widthPct}%;"
-        ></div>
-
-        <input
-                class="date-slider"
-                type="range"
-                min={startMs}
-                max={trackEndMs}
-                step={STEP_MS}
-                value={safeTimeMs}
-                on:input={handleRangeInput}
-                aria-label="Select candidate landing date"
-        />
-
-        <div class="slider-endpoints">
-            <span>{formatShortDateOnlyUtc(startMs)}</span>
-            <span class="legend-inline">
-                <i class="dot optimal"></i> Optimal
-                <i class="dot marginal"></i> Partial
-                <i class="dot span"></i> Mission Span
-                <span class="cutoff-hint">· Cutoff {formatShortDateOnlyUtc(endMs)}</span>
-            </span>
-            <span>{formatShortDateOnlyUtc(trackEndMs)}</span>
-        </div>
-    </div>
-
-    <!-- Recommended Landing Dates & Live Evaluation -->
-    {#if targetSites.length > 0}
-        <div class="timeline-footer">
-            <div class="recommended-row">
-                <span class="rec-heading">
-                    {targetSites.length > 1
-                        ? `Joint Best Starts (${formatDurationHours(missionDurationHours)}):`
-                        : `Best Starts (${formatDurationHours(missionDurationHours)}):`}
-                </span>
-                {#if recommendedWindows.length > 0}
-                    <div class="rec-chips">
-                        {#each recommendedWindows as win}
-                            {@const isInside = safeTimeMs >= win.startMs && safeTimeMs <= win.endMs}
-                            <button
-                                    class="rec-chip"
-                                    class:active={isInside}
-                                    on:click={() => jumpToWindow(win.peakMs)}
-                                    title="Jump to optimal start window ({win.label} · Score ~{win.avgScore})"
-                            >
-                                ★ {win.label}
-                            </button>
-                        {/each}
-                    </div>
-                {:else}
-                    <span class="no-rec">Evaluating timeline...</span>
+                {#if isLoadingData}
+                    <span class="loading-pill" role="status" aria-live="polite">
+                        <span class="spinner" aria-hidden="true"></span>
+                        Loading data...
+                    </span>
                 {/if}
             </div>
 
-            <div class="site-verdicts">
-                {#each liveSiteEvaluations as item (item.site.id)}
-                    <div class="verdict-pill">
-                        <span class="verdict-site" style="color: {item.accentColor};">
-                            {item.site.name}
-                        </span>
-                        <span class="verdict-detail">
-                            {item.evalData.isEarthVisible ? 'Earth LOS' : 'No LOS'} · Sun {item.evalData.sunAngleDeg.toFixed(0)}°
-                        </span>
-                        {#if item.site.missionSunlight}
-                            <span
-                                    class="sun-dur-tag"
-                                    title="Sunlit hours during {formatDurationHours(missionDurationHours)} mission"
-                            >
-                                ☀ {item.site.missionSunlight.sunlitHours.toFixed(1)}h ({item.site.missionSunlight.sunlitPercentage.toFixed(0)}%)
-                            </span>
-                        {/if}
-                        <span class="verdict-badge {item.evalData.status.toLowerCase()}">
-                            {item.evalData.status}
-                        </span>
-                    </div>
-                {/each}
+            <div class="timeline-controls">
+                {#if targetSites.length > 0 && recommendedWindows.length > 0}
+                    <button
+                            class="step-btn best-btn"
+                            on:click={() => {
+                            stopPlayback();
+                            if (onAutoPickBest) {
+                                onAutoPickBest();
+                            } else {
+                                jumpToWindow(recommendedWindows[0].peakMs);
+                            }
+                        }}
+                            title="Jump to highest-scoring landing date on timeline"
+                    >
+                        ★ Auto-Best
+                    </button>
+                {/if}
+                <button
+                        class="step-btn"
+                        on:click={() => stepByHours(-12)}
+                        disabled={safeTimeMs <= startMs}
+                        title="Back 12 hours"
+                >
+                    -12h
+                </button>
+                <button
+                        class="step-btn play-btn"
+                        on:click={togglePlay}
+                        title={isPlaying ? 'Pause timeline' : 'Scrub through dates'}
+                >
+                    {isPlaying ? '❚❚' : '▶'}
+                </button>
+                <button
+                        class="step-btn"
+                        on:click={() => stepByHours(12)}
+                        disabled={safeTimeMs >= endMs}
+                        title="Forward 12 hours"
+                >
+                    +12h
+                </button>
+                <button
+                        type="button"
+                        class="step-btn collapse-timeline-btn"
+                        on:click={toggleTimelineOpen}
+                        aria-expanded={true}
+                        aria-label="Hide mission timeline"
+                        title="Hide mission timeline"
+                >
+                    ▾
+                </button>
             </div>
         </div>
-    {/if}
-</div>
+
+        <!-- Launch Month & Mission Duration Selector Bar -->
+        <div class="duration-row">
+            <div class="month-switcher" title="Select launch month/year">
+                <button
+                        class="step-btn month-nav-btn"
+                        on:click={() => shiftMonth(-1)}
+                        aria-label="Previous launch month"
+                        title="Previous launch month"
+                >
+                    ◀
+                </button>
+                <label class="month-input-wrap">
+                    <input
+                            class="month-input"
+                            type="month"
+                            value={monthInputValue}
+                            on:change={handleMonthInput}
+                            aria-label="Select launch year and month ({activeMonthLabel})"
+                    />
+                </label>
+                <button
+                        class="step-btn month-nav-btn"
+                        on:click={() => shiftMonth(1)}
+                        aria-label="Next launch month"
+                        title="Next launch month"
+                >
+                    ▶
+                </button>
+            </div>
+
+            <span class="row-divider" aria-hidden="true"></span>
+
+            <span class="duration-label">Duration:</span>
+            <div class="duration-presets">
+                {#each DURATION_PRESETS as preset}
+                    <button
+                            class="dur-chip"
+                            class:active={missionDurationHours === preset.hours}
+                            on:click={() => onChangeDuration(preset.hours)}
+                    >
+                        {preset.label}
+                    </button>
+                {/each}
+            </div>
+
+            <label class="custom-dur-wrap" title="Custom mission duration in hours (1–720h)">
+                <input
+                        class="custom-dur-input"
+                        type="number"
+                        min="1"
+                        max="720"
+                        step="1"
+                        value={missionDurationHours}
+                        on:change={handleCustomHoursInput}
+                        aria-label="Mission duration in hours"
+                />
+                <span>hrs</span>
+            </label>
+        </div>
+
+        <!-- Track with full-timeline suitability heat-map bar, spillover zone & active mission span overlay -->
+        <div class="slider-track-wrapper">
+            <div class="suitability-bar" aria-hidden="true">
+                {#each trackSegments as seg}
+                    <span class="suitability-seg {seg}"></span>
+                {/each}
+            </div>
+
+            {#if missionSpanOverlay.monthBoundaryPct < 100}
+                <div
+                        class="spillover-zone"
+                        aria-hidden="true"
+                        style="left: {missionSpanOverlay.monthBoundaryPct}%; right: 0;"
+                        title="Next-month mission spillover region"
+                ></div>
+                <div
+                        class="month-boundary-tick"
+                        aria-hidden="true"
+                        style="left: {missionSpanOverlay.monthBoundaryPct}%;"
+                ></div>
+            {/if}
+
+            <div
+                    class="mission-span-overlay"
+                    aria-hidden="true"
+                    style="left: {missionSpanOverlay.leftPct}%; width: {missionSpanOverlay.widthPct}%;"
+            ></div>
+
+            <input
+                    class="date-slider"
+                    type="range"
+                    min={startMs}
+                    max={trackEndMs}
+                    step={STEP_MS}
+                    value={safeTimeMs}
+                    on:input={handleRangeInput}
+                    aria-label="Select candidate landing date"
+            />
+
+            <div class="slider-endpoints">
+                <span>{formatShortDateOnlyUtc(startMs)}</span>
+                <span class="legend-inline">
+                    <i class="dot optimal"></i> Optimal
+                    <i class="dot marginal"></i> Partial
+                    <i class="dot span"></i> Mission Span
+                    <span class="cutoff-hint">· Cutoff {formatShortDateOnlyUtc(endMs)}</span>
+                </span>
+                <span>{formatShortDateOnlyUtc(trackEndMs)}</span>
+            </div>
+        </div>
+
+        <!-- Recommended Landing Dates & Live Evaluation -->
+        {#if targetSites.length > 0}
+            <div class="timeline-footer">
+                <div class="recommended-row">
+                    <span class="rec-heading">
+                        {targetSites.length > 1
+                            ? `Joint Best Starts (${formatDurationHours(missionDurationHours)}):`
+                            : `Best Starts (${formatDurationHours(missionDurationHours)}):`}
+                    </span>
+                    {#if recommendedWindows.length > 0}
+                        <div class="rec-chips">
+                            {#each recommendedWindows as win}
+                                {@const isInside = safeTimeMs >= win.startMs && safeTimeMs <= win.endMs}
+                                <button
+                                        class="rec-chip"
+                                        class:active={isInside}
+                                        on:click={() => jumpToWindow(win.peakMs)}
+                                        title="Jump to optimal start window ({win.label} · Score ~{win.avgScore})"
+                                >
+                                    ★ {win.label}
+                                </button>
+                            {/each}
+                        </div>
+                    {:else}
+                        <span class="no-rec">Evaluating timeline...</span>
+                    {/if}
+                </div>
+
+                <div class="site-verdicts">
+                    {#each liveSiteEvaluations as item (item.site.id)}
+                        <div class="verdict-pill">
+                            <span class="verdict-site" style="color: {item.accentColor};">
+                                {item.site.name}
+                            </span>
+                            <span class="verdict-detail">
+                                {item.evalData.isEarthVisible ? 'Earth LOS' : 'No LOS'} · Sun {item.evalData.sunAngleDeg.toFixed(0)}°
+                            </span>
+                            {#if item.site.missionSunlight}
+                                <span
+                                        class="sun-dur-tag"
+                                        title="Sunlit hours during {formatDurationHours(missionDurationHours)} mission"
+                                >
+                                    ☀ {item.site.missionSunlight.sunlitHours.toFixed(1)}h ({item.site.missionSunlight.sunlitPercentage.toFixed(0)}%)
+                                </span>
+                            {/if}
+                            <span class="verdict-badge {item.evalData.status.toLowerCase()}">
+                                {item.evalData.status}
+                            </span>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+        {/if}
+    </div>
+{:else}
+    <button
+            type="button"
+            class="timeline-collapsed-pill"
+            on:click={toggleTimelineOpen}
+            aria-expanded={false}
+            aria-label="Show mission timeline"
+            title="Show mission timeline"
+    >
+        <span class="pill-arrow">▲</span>
+        <span class="pill-title">Timeline</span>
+        <span class="pill-sep">·</span>
+        <span class="pill-date">{formatFullUtc(safeTimeMs)}</span>
+        {#if isLoadingData}
+            <span class="spinner" aria-hidden="true"></span>
+        {/if}
+    </button>
+{/if}
 
 <style>
     .timeline-dock {
@@ -413,6 +451,50 @@
         gap: 0.45rem;
         box-sizing: border-box;
         transition: width 0.25s ease;
+    }
+
+    .timeline-collapsed-pill {
+        position: absolute;
+        bottom: 20px;
+        left: 20px;
+        z-index: 10;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        background-color: rgba(14, 14, 18, 0.9);
+        backdrop-filter: blur(8px);
+        color: #eaeaea;
+        border: 1px solid rgba(234, 234, 234, 0.28);
+        border-radius: 10px;
+        padding: 0.42rem 0.8rem;
+        font-family: inherit;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .timeline-collapsed-pill:hover {
+        background-color: rgba(34, 34, 42, 0.95);
+        border-color: rgba(234, 234, 234, 0.55);
+    }
+
+    .pill-arrow {
+        font-size: 0.65rem;
+        opacity: 0.85;
+    }
+
+    .pill-title {
+        font-weight: 600;
+        color: #ffffff;
+    }
+
+    .pill-sep {
+        opacity: 0.45;
+    }
+
+    .pill-date {
+        opacity: 0.85;
+        font-variant-numeric: tabular-nums;
     }
 
     .timeline-header {
@@ -504,6 +586,11 @@
     .step-btn:disabled {
         opacity: 0.35;
         cursor: not-allowed;
+    }
+
+    .collapse-timeline-btn {
+        margin-left: 0.15rem;
+        padding: 0.18rem 0.42rem;
     }
 
     .best-btn {
