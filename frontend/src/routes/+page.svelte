@@ -3,11 +3,15 @@
     import '#lib/lunar/shared.css';
     import type { SelectedSite } from '#lib/lunar/types';
     import {
+        DEFAULT_TIMELINE_START_MS,
         HOURS_LABELS,
+        MAX_MISSION_PAD_MS,
         applyFallbackRescore,
         buildFallbackSeries,
         fetchSiteTelemetry,
-        getTimelineBounds
+        fetchTimelineBlockTelemetry,
+        findRecommendedLandingWindows,
+        getMonthBounds
     } from '#lib/lunar/telemetry';
     import LunarGlobe from '#lib/lunar/LunarGlobe.svelte';
     import SitesListView from '#lib/lunar/SitesListView.svelte';
@@ -23,14 +27,20 @@
     let nextSiteId = 1;
     let viewportWidth = 1440;
 
-    let selectedTimeMs = Date.UTC(2026, 9, 1, 0, 0);
+    let activeTimelineYear = 2026;
+    let activeTimelineMonth = 9; // 0-indexed (9 = October)
+    let selectedTimeMs = DEFAULT_TIMELINE_START_MS;
     let missionDurationHours = 72;
+    let hasUserScrubbedTime = false;
 
     const telemetryCache = new Map<string, Partial<SelectedSite>>();
     const activeAbortControllers = new Map<number, AbortController>();
     const inFlightKeys = new Map<number, string>();
     let refreshDebounceTimer: ReturnType<typeof setTimeout> | undefined = undefined;
     let lastScheduledWindowKey = '';
+
+    $: loadingCount = selectedSites.filter((s) => s.loadingScore || s.updatingTelemetry).length;
+    $: isLoadingData = loadingCount > 0;
 
     $: activeSite = selectedSites.find((s) => s.id === activeSiteId) ?? null;
 
@@ -47,12 +57,15 @@
             ? [activeSite]
             : selectedSites;
 
-    $: timelineBounds = getTimelineBounds(selectedSites);
-    $: if (selectedTimeMs < timelineBounds.startMs || selectedTimeMs > timelineBounds.endMs) {
+    $: timelineBounds = getMonthBounds(activeTimelineYear, activeTimelineMonth);
+
+    $: if (selectedTimeMs < timelineBounds.startMs) {
         selectedTimeMs = timelineBounds.startMs;
+    } else if (selectedTimeMs > timelineBounds.endMs) {
+        selectedTimeMs = timelineBounds.endMs;
     }
 
-    // Automatically detect landing time or mission duration changes and update all selected sites
+    // Automatically detect landing time or mission duration changes and query `/fetch-data` for every site
     $: currentWindowKey = `${selectedTimeMs}|${missionDurationHours}`;
     $: if (currentWindowKey !== lastScheduledWindowKey) {
         lastScheduledWindowKey = currentWindowKey;
@@ -81,10 +94,22 @@
         return `${lat.toFixed(5)}_${lon.toFixed(5)}_${startMs}_${durationHours}`;
     }
 
-    /**
-     * 1) Immediately applies `rescoreFromPayload` as a zero-latency fallback to all loaded sites.
-     * 2) Debounces and queries `/fetch-data` for every selected site to update full parameters.
-     */
+    function autoPickBestTimelineWindow(
+        sitesToEvaluate: SelectedSite[],
+        bounds = timelineBounds
+    ) {
+        if (sitesToEvaluate.length === 0) return;
+        const best = findRecommendedLandingWindows(
+            sitesToEvaluate,
+            bounds.startMs,
+            bounds.endMs,
+            missionDurationHours
+        );
+        if (best.length > 0) {
+            selectedTimeMs = best[0].peakMs;
+        }
+    }
+
     function handleTimeOrDurationUpdate(startMs: number, durationHours: number) {
         if (selectedSites.length === 0) return;
 
@@ -99,17 +124,107 @@
 
         refreshDebounceTimer = setTimeout(() => {
             for (const site of selectedSites) {
-                loadTelemetry(site, startMs, durationHours, false);
+                if (!site.hasTimelineBlockData) {
+                    initializeSiteFullTimeline(site);
+                } else {
+                    refreshSiteMissionWindow(site, startMs, durationHours, false);
+                }
             }
         }, 350);
     }
 
-    async function loadTelemetry(
+    async function initializeSiteFullTimeline(
         site: SelectedSite,
-        startMs = selectedTimeMs,
-        durationHours = missionDurationHours,
-        isInitialLoad = false
+        bounds = timelineBounds
     ) {
+        const prevController = activeAbortControllers.get(site.id);
+        if (prevController) prevController.abort();
+
+        const controller = new AbortController();
+        activeAbortControllers.set(site.id, controller);
+        inFlightKeys.set(site.id, 'FULL_TIMELINE_BLOCK');
+
+        selectedSites = selectedSites.map((s) =>
+            s.id === site.id ? { ...s, loadingScore: true, scoreError: false } : s
+        );
+
+        try {
+            const blockStartMs = bounds.startMs;
+            const blockEndMs = bounds.endMs + MAX_MISSION_PAD_MS;
+
+            const blockUpdates = await fetchTimelineBlockTelemetry(
+                site.rawLat,
+                site.rawLon,
+                blockStartMs,
+                blockEndMs,
+                60,
+                controller.signal,
+                bounds.endMs
+            );
+
+            selectedSites = selectedSites.map((s) => {
+                if (s.id !== site.id) return s;
+                const merged: SelectedSite = {
+                    ...s,
+                    ...blockUpdates,
+                    loadingScore: false,
+                    updatingTelemetry: false,
+                    scoreError: false
+                };
+                return applyFallbackRescore(merged, selectedTimeMs, missionDurationHours);
+            });
+
+            if (activeAbortControllers.get(site.id) === controller) {
+                activeAbortControllers.delete(site.id);
+            }
+            if (inFlightKeys.get(site.id) === 'FULL_TIMELINE_BLOCK') {
+                inFlightKeys.delete(site.id);
+            }
+
+            if (!hasUserScrubbedTime) {
+                const targetList = compareSites
+                    ? [compareSites[0], compareSites[1]]
+                    : activeSite
+                        ? [activeSite]
+                        : selectedSites;
+                autoPickBestTimelineWindow(targetList, bounds);
+            }
+
+            const refreshed = selectedSites.find((s) => s.id === site.id);
+            if (refreshed) {
+                await refreshSiteMissionWindow(
+                    refreshed,
+                    selectedTimeMs,
+                    missionDurationHours,
+                    false
+                );
+            }
+        } catch (error: any) {
+            if (error?.name === 'AbortError') return;
+            console.error(`Failed to load full timeline block for site #${site.id}:`, error);
+            selectedSites = selectedSites.map((s) =>
+                s.id === site.id
+                    ? { ...s, loadingScore: false, updatingTelemetry: false, scoreError: true }
+                    : s
+            );
+        } finally {
+            if (activeAbortControllers.get(site.id) === controller) {
+                activeAbortControllers.delete(site.id);
+            }
+            if (inFlightKeys.get(site.id) === 'FULL_TIMELINE_BLOCK') {
+                inFlightKeys.delete(site.id);
+            }
+        }
+    }
+
+    async function refreshSiteMissionWindow(
+        site: SelectedSite,
+        startMs: number,
+        durationHours: number,
+        isBlockingLoad = false
+    ) {
+        if (inFlightKeys.get(site.id) === 'FULL_TIMELINE_BLOCK') return;
+
         const cacheKey = buildTelemetryCacheKey(site.rawLat, site.rawLon, startMs, durationHours);
 
         if (telemetryCache.has(cacheKey)) {
@@ -143,9 +258,9 @@
             s.id === site.id
                 ? {
                     ...s,
-                    loadingScore: isInitialLoad,
-                    updatingTelemetry: !isInitialLoad,
-                    scoreError: isInitialLoad ? false : s.scoreError
+                    loadingScore: isBlockingLoad,
+                    updatingTelemetry: !isBlockingLoad,
+                    scoreError: isBlockingLoad ? false : s.scoreError
                 }
                 : s
         );
@@ -176,9 +291,8 @@
             );
         } catch (error: any) {
             if (error?.name === 'AbortError') return;
-            console.error(`Failed to fetch data for site #${site.id}:`, error);
+            console.error(`Failed to refresh mission window for site #${site.id}:`, error);
 
-            // Fall back to client-side rescoreFromPayload if the API call fails
             selectedSites = selectedSites.map((s) => {
                 if (s.id !== site.id) return s;
                 const rescored = applyFallbackRescore(s, startMs, durationHours);
@@ -186,7 +300,7 @@
                     ...rescored,
                     loadingScore: false,
                     updatingTelemetry: false,
-                    scoreError: isInitialLoad
+                    scoreError: isBlockingLoad
                 };
             });
         } finally {
@@ -225,6 +339,9 @@
             slopeSuitability: 0.5,
             visibilityWindows: [],
             sunlightWindows: [],
+            timelineVisibilityWindows: [],
+            timelineSunlightWindows: [],
+            hasTimelineBlockData: false,
             hasRealSunlightWindows: false,
             visibilityCoveragePct: null,
             visibilitySeries: fallback.earthVisibility24h,
@@ -249,7 +366,34 @@
             activeSiteId = id;
         }
 
-        loadTelemetry(newSite, selectedTimeMs, missionDurationHours, true);
+        initializeSiteFullTimeline(newSite, timelineBounds);
+    }
+
+    function handleMonthChange(year: number, monthIndex: number) {
+        if (year === activeTimelineYear && monthIndex === activeTimelineMonth) return;
+
+        if (refreshDebounceTimer !== undefined) {
+            clearTimeout(refreshDebounceTimer);
+        }
+
+        activeTimelineYear = year;
+        activeTimelineMonth = monthIndex;
+        hasUserScrubbedTime = false;
+
+        const nextBounds = getMonthBounds(year, monthIndex);
+        selectedTimeMs = nextBounds.startMs;
+
+        if (selectedSites.length > 0) {
+            selectedSites = selectedSites.map((s) => ({
+                ...s,
+                hasTimelineBlockData: false,
+                loadingScore: true,
+                scoreError: false
+            }));
+            for (const site of selectedSites) {
+                initializeSiteFullTimeline(site, nextBounds);
+            }
+        }
     }
 
     function handleSelectSite(site: SelectedSite) {
@@ -307,15 +451,26 @@
         selectedSites = [];
         activeSiteId = null;
         comparePairIds = null;
+        hasUserScrubbedTime = false;
         nextSiteId = 1;
     }
 
     function handleTimelineChange(nextMs: number) {
-        selectedTimeMs = nextMs;
+        hasUserScrubbedTime = true;
+        selectedTimeMs = Math.max(timelineBounds.startMs, Math.min(timelineBounds.endMs, nextMs));
     }
 
     function handleDurationChange(nextHours: number) {
         missionDurationHours = nextHours;
+
+        if (!hasUserScrubbedTime && timelineTargetSites.length > 0) {
+            autoPickBestTimelineWindow(timelineTargetSites);
+        }
+    }
+
+    function handleManualAutoPickBest() {
+        hasUserScrubbedTime = false;
+        autoPickBestTimelineWindow(timelineTargetSites);
     }
 
     onDestroy(() => {
@@ -357,7 +512,7 @@
                 onChangePair={(pair) => (comparePairIds = pair)}
                 onBack={() => (comparePairIds = null)}
                 onFocus={(site) => globe?.flyToSite(site)}
-                onRetry={(site) => loadTelemetry(site, selectedTimeMs, missionDurationHours, true)}
+                onRetry={(site) => initializeSiteFullTimeline(site, timelineBounds)}
         />
     {:else if activeSite}
         <SiteDetailView
@@ -370,7 +525,7 @@
                 onFocus={(site) => globe?.flyToSite(site)}
                 onCompareWith={handleCompareFromDetail}
                 onRemove={handleRemoveSite}
-                onRetry={(site) => loadTelemetry(site, selectedTimeMs, missionDurationHours, true)}
+                onRetry={(site) => initializeSiteFullTimeline(site, timelineBounds)}
         />
     {:else if selectedSites.length > 0}
         <SitesListView
@@ -396,6 +551,17 @@
             View Earth
         </button>
     {/if}
+
+    {#if isLoadingData}
+        <div class="global-loading-badge" role="status" aria-live="polite">
+            <span class="top-spinner" aria-hidden="true"></span>
+            <span>
+                {loadingCount === 1
+                    ? 'Fetching lunar telemetry...'
+                    : `Fetching telemetry (${loadingCount} sites)...`}
+            </span>
+        </div>
+    {/if}
 </div>
 
 <MissionTimelineSlider
@@ -405,8 +571,11 @@
         {missionDurationHours}
         targetSites={timelineTargetSites}
         {rightInsetPx}
+        {isLoadingData}
         onChangeTime={handleTimelineChange}
         onChangeDuration={handleDurationChange}
+        onChangeMonth={handleMonthChange}
+        onAutoPickBest={handleManualAutoPickBest}
 />
 
 <style>
@@ -466,6 +635,7 @@
         left: 20px;
         display: flex;
         flex-direction: row;
+        align-items: center;
         gap: 0.5rem;
         z-index: 10;
     }
@@ -488,5 +658,34 @@
 
     .btn-moon:hover {
         background-color: rgba(234, 234, 234, 0.3);
+    }
+
+    .global-loading-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.32rem 0.7rem;
+        border-radius: 999px;
+        background-color: rgba(7, 7, 7, 0.85);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(96, 165, 250, 0.4);
+        color: #93c5fd;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .top-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(147, 197, 253, 0.28);
+        border-top-color: #93c5fd;
+        border-radius: 50%;
+        animation: top-spin 0.75s linear infinite;
+    }
+
+    @keyframes top-spin {
+        to {
+            transform: rotate(360deg);
+        }
     }
 </style>

@@ -121,8 +121,13 @@ export interface SelectedSite {
     groundAngle: number | null;
     lolaRoughnessDeg: number | null;
     slopeSuitability: number;
+    /** Active mission interval windows [selectedTimeMs, selectedTimeMs + missionDuration] */
     visibilityWindows: VisibilityWindow[];
     sunlightWindows: VisibilityWindow[];
+    /** Full timeline block windows so the timeline track & recommendations never become partial */
+    timelineVisibilityWindows: VisibilityWindow[];
+    timelineSunlightWindows: VisibilityWindow[];
+    hasTimelineBlockData: boolean;
     hasRealSunlightWindows: boolean;
     visibilityCoveragePct: number | null;
     visibilitySeries: number[];
