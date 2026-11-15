@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import type { EarthEphemeris, SelectedSite } from './types';
+    import type { EarthEphemeris, HistoricalLandingSite, SelectedSite } from './types';
     import {
         computeEarthPositionFromMoon,
         evaluateSiteAtTimestamp,
@@ -12,8 +12,11 @@
     export let rightInsetPx = 0;
     export let selectedTimeMs: number | null = null;
     export let isViewingEarth = false;
+    export let historicalSites: HistoricalLandingSite[] = [];
     export let onAddSite: (coords: { lat: number; lon: number; alt: number }) => void;
     export let onSelectSite: (siteId: number) => void;
+    export let onSelectHistoricalSite: ((site: HistoricalLandingSite) => void) | undefined =
+        undefined;
 
     const MOON_RADIUS_M = 1737400;
     const EARTH_RADIUS_M = 6371000;
@@ -33,7 +36,13 @@
     let subEarthLabel: any = null;
     let earthEphemeris: EarthEphemeris | null = null;
 
+    let hoveredHistoricalId: string | null = null;
+
     const primitivesBySiteId = new Map<number, { point: any; label: any }>();
+    const historicalPrimitivesById = new Map<
+        string,
+        { site: HistoricalLandingSite; point: any; label: any }
+    >();
 
     function getEarthCartesian(ephem: EarthEphemeris) {
         return Cesium.Cartesian3.fromDegrees(
@@ -54,7 +63,9 @@
 
         // Sidereal Earth rotation (GMST: 360.985647° per solar day) + ~22° axial tilt in Moon frame
         const daysSinceJ2000 = (timeMs - J2000_EPOCH_MS) / 86400000;
-        const gmstRad = Cesium.Math.toRadians((280.46061837 + 360.98564736629 * daysSinceJ2000) % 360);
+        const gmstRad = Cesium.Math.toRadians(
+            (280.46061837 + 360.98564736629 * daysSinceJ2000) % 360
+        );
         const tiltRad = Cesium.Math.toRadians(22.0);
 
         const spinRot = Cesium.Matrix3.fromRotationZ(gmstRad);
@@ -149,13 +160,103 @@
         }
     }
 
+    function syncHistoricalPrimitives() {
+        if (!Cesium || !pointsCollection || !labelsCollection) return;
+
+        const validIds = new Set(historicalSites.map((s) => s.id));
+        const registeredHistoricalIds = new Set(
+            sites.map((s) => s.historicalId).filter((id): id is string => Boolean(id))
+        );
+
+        for (const [id, entry] of historicalPrimitivesById.entries()) {
+            if (!validIds.has(id)) {
+                pointsCollection.remove(entry.point);
+                labelsCollection.remove(entry.label);
+                historicalPrimitivesById.delete(id);
+            }
+        }
+
+        const restFill = Cesium.Color.fromCssColorString('#e4e4e7').withAlpha(0.55);
+        const restOutline = Cesium.Color.fromCssColorString('#d4d4d8').withAlpha(0.35);
+        const hoverFill = Cesium.Color.fromCssColorString('#f4f4f5').withAlpha(0.95);
+        const hoverOutline = Cesium.Color.WHITE.withAlpha(0.95);
+
+        for (const hSite of historicalSites) {
+            let entry = historicalPrimitivesById.get(hSite.id);
+
+            if (!entry) {
+                const cartesian = Cesium.Cartesian3.fromDegrees(
+                    hSite.lon,
+                    hSite.lat,
+                    hSite.alt ?? 0,
+                    Cesium.Ellipsoid.MOON
+                );
+
+                const point = pointsCollection.add({
+                    id: { historicalSite: hSite },
+                    position: cartesian,
+                    pixelSize: 3.5,
+                    color: restFill,
+                    outlineColor: restOutline,
+                    outlineWidth: 1
+                });
+
+                const label = labelsCollection.add({
+                    id: { historicalSite: hSite },
+                    position: cartesian,
+                    text: `${hSite.name} (${hSite.year})`,
+                    font: '600 12px Rubik, sans-serif',
+                    fillColor: Cesium.Color.fromCssColorString('#f8fafc'),
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2.5,
+                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                    pixelOffset: new Cesium.Cartesian2(0, -8),
+                    show: false
+                });
+
+                entry = { site: hSite, point, label };
+                historicalPrimitivesById.set(hSite.id, entry);
+            }
+
+            const isAlreadyAdded = registeredHistoricalIds.has(hSite.id);
+            const isHovered = hoveredHistoricalId === hSite.id;
+
+            entry.point.show = !isAlreadyAdded;
+            entry.label.show = !isAlreadyAdded && isHovered;
+
+            if (isHovered && !isAlreadyAdded) {
+                entry.point.pixelSize = 7.5;
+                entry.point.color = hoverFill;
+                entry.point.outlineWidth = 1.5;
+                entry.point.outlineColor = hoverOutline;
+            } else {
+                entry.point.pixelSize = 3.5;
+                entry.point.color = restFill;
+                entry.point.outlineWidth = 1;
+                entry.point.outlineColor = restOutline;
+            }
+        }
+    }
+
     $: if (viewer && !viewer.isDestroyed() && Cesium && selectedTimeMs !== null) {
         viewer.clock.currentTime = Cesium.JulianDate.fromDate(new Date(selectedTimeMs));
         updateEarthInScene(selectedTimeMs);
     }
 
-    $: if (Cesium && polylinesCollection && earthEphemeris && selectedTimeMs !== null && sites && highlightedSiteIds) {
+    $: if (
+        Cesium &&
+        polylinesCollection &&
+        earthEphemeris &&
+        selectedTimeMs !== null &&
+        sites &&
+        highlightedSiteIds
+    ) {
         rebuildSightlines(selectedTimeMs, getEarthCartesian(earthEphemeris));
+    }
+
+    $: if (Cesium && pointsCollection && labelsCollection && historicalSites && sites) {
+        syncHistoricalPrimitives();
     }
 
     export function flyToSite(site: SelectedSite) {
@@ -437,7 +538,12 @@
 
         earthLabel = labelsCollection.add({
             id: { isEarth: true },
-            position: Cesium.Cartesian3.fromDegrees(0, 0, 384400000 - MOON_RADIUS_M, Cesium.Ellipsoid.MOON),
+            position: Cesium.Cartesian3.fromDegrees(
+                0,
+                0,
+                384400000 - MOON_RADIUS_M,
+                Cesium.Ellipsoid.MOON
+            ),
             text: 'Earth',
             font: '600 13px Rubik, sans-serif',
             fillColor: Cesium.Color.fromCssColorString('#93c5fd'),
@@ -470,11 +576,39 @@
             pixelOffset: new Cesium.Cartesian2(0, 8)
         });
 
+        syncHistoricalPrimitives();
+
         const initialTimeMs = selectedTimeMs ?? Date.UTC(2026, 9, 1, 0, 0);
         viewer.clock.currentTime = Cesium.JulianDate.fromDate(new Date(initialTimeMs));
         updateEarthInScene(initialTimeMs);
 
         handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+        // Hover over soft historical landing site markers to expand them and display their name
+        handler.setInputAction((movement: { endPosition: any }) => {
+            if (!viewer || viewer.isDestroyed()) return;
+
+            const pickedObject = viewer.scene.pick(movement.endPosition);
+            const nextHoveredId: string | null =
+                Cesium.defined(pickedObject) && pickedObject.id?.historicalSite
+                    ? pickedObject.id.historicalSite.id
+                    : null;
+
+            const isInteractiveHover =
+                Cesium.defined(pickedObject) &&
+                Boolean(
+                    pickedObject.id?.historicalSite ||
+                    pickedObject.id?.siteId !== undefined ||
+                    pickedObject.id?.isEarth
+                );
+
+            viewer.scene.canvas.style.cursor = isInteractiveHover ? 'pointer' : '';
+
+            if (nextHoveredId !== hoveredHistoricalId) {
+                hoveredHistoricalId = nextHoveredId;
+                syncHistoricalPrimitives();
+            }
+        }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
         handler.setInputAction((movement: { position: any }) => {
             const pickedObject = viewer.scene.pick(movement.position);
@@ -486,6 +620,20 @@
                 if (pickedObject.id?.siteId !== undefined) {
                     isViewingEarth = false;
                     onSelectSite(pickedObject.id.siteId);
+                    return;
+                }
+                if (pickedObject.id?.historicalSite) {
+                    isViewingEarth = false;
+                    const histSite: HistoricalLandingSite = pickedObject.id.historicalSite;
+                    if (onSelectHistoricalSite) {
+                        onSelectHistoricalSite(histSite);
+                    } else {
+                        onAddSite({
+                            lat: histSite.lat,
+                            lon: histSite.lon,
+                            alt: histSite.alt ?? 0
+                        });
+                    }
                     return;
                 }
             }
@@ -532,6 +680,7 @@
 
     onDestroy(() => {
         primitivesBySiteId.clear();
+        historicalPrimitivesById.clear();
         if (handler) handler.destroy();
         if (viewer && !viewer.isDestroyed()) viewer.destroy();
     });

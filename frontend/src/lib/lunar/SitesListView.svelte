@@ -1,12 +1,15 @@
 <script lang="ts">
-    import type { SelectedSite } from './types';
+    import type { HistoricalLandingSite, SelectedSite } from './types';
     import { getScoreClass } from './telemetry';
+    import HistoricalSiteSearch from './HistoricalSiteSearch.svelte';
 
     export let sites: SelectedSite[] = [];
     export let onSelect: (site: SelectedSite) => void;
     export let onCompare: (siteIds: [number, number]) => void;
     export let onRemove: (id: number) => void;
     export let onClearAll: () => void;
+    export let onSelectHistoricalSite: ((site: HistoricalLandingSite) => void) | undefined =
+        undefined;
 
     let compareMode = false;
     let pickedIds: number[] = [];
@@ -43,6 +46,14 @@
 </script>
 
 <div class="sites-panel">
+    {#if onSelectHistoricalSite}
+        <HistoricalSiteSearch
+                existingSites={sites}
+                compact={true}
+                {onSelectHistoricalSite}
+        />
+    {/if}
+
     <div class="sites-header">
         <span>
             {#if compareMode}
@@ -55,8 +66,8 @@
         <div class="header-actions">
             {#if sites.length >= 2}
                 <button
-                    class="btn {compareMode ? 'btn-active' : 'btn-outline'}"
-                    on:click={toggleCompareMode}
+                        class="btn {compareMode ? 'btn-active' : 'btn-outline'}"
+                        on:click={toggleCompareMode}
                 >
                     {compareMode ? 'Cancel' : 'Compare'}
                 </button>
@@ -70,9 +81,9 @@
             {@const pickIndex = pickedIds.indexOf(site.id)}
             <div class="site-card" class:picked={pickIndex !== -1}>
                 <button
-                    class="site-info"
-                    on:click={() => handleCardClick(site)}
-                    title={compareMode
+                        class="site-info"
+                        on:click={() => handleCardClick(site)}
+                        title={compareMode
                         ? `Select ${site.name} for comparison`
                         : `View details for ${site.name}`}
                 >
@@ -84,6 +95,9 @@
                         {/if}
                         <strong>{site.name}</strong>
                     </div>
+                    {#if site.historicalSubtitle}
+                        <span class="historical-tag">{site.historicalSubtitle}</span>
+                    {/if}
                     <span>Lat: {site.lat}° | Lon: {site.lon}° | Alt: {site.alt}m</span>
                     {#if site.terrainType}
                         <span class="terrain-tag">{site.terrainType}</span>
@@ -103,8 +117,8 @@
                         <span class="score-badge error">Error</span>
                     {:else if typeof site.score === 'number'}
                         <span
-                            class="score-badge {getScoreClass(site.score)}"
-                            title="Landing Suitability Score"
+                                class="score-badge {getScoreClass(site.score)}"
+                                title="Landing Suitability Score"
                         >
                             {site.score.toFixed(1)}
                         </span>
@@ -113,10 +127,10 @@
                     {/if}
 
                     <button
-                        class="remove-btn"
-                        on:click={() => onRemove(site.id)}
-                        aria-label="Remove {site.name}"
-                        title="Remove site"
+                            class="remove-btn"
+                            on:click={() => onRemove(site.id)}
+                            aria-label="Remove {site.name}"
+                            title="Remove site"
                     >
                         ✕
                     </button>
@@ -237,6 +251,12 @@
     .site-info span {
         font-size: 0.75rem;
         opacity: 0.8;
+    }
+
+    .historical-tag {
+        font-size: 0.7rem !important;
+        color: #93c5fd;
+        opacity: 0.9 !important;
     }
 
     .terrain-tag {

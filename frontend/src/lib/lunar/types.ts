@@ -101,8 +101,23 @@ export interface FetchDataResponse {
     sunlight_angle_24h?: number[] | null;
 }
 
+export interface HistoricalLandingSite {
+    id: string;
+    name: string;
+    region: string;
+    agency: string;
+    year: number;
+    lat: number;
+    lon: number;
+    alt?: number;
+    isDefaultPreset?: boolean;
+    summary: string;
+}
+
 export interface SelectedSite {
     id: number;
+    historicalId?: string;
+    historicalSubtitle?: string;
     name: string;
     lat: string;
     lon: string;
@@ -121,10 +136,8 @@ export interface SelectedSite {
     groundAngle: number | null;
     lolaRoughnessDeg: number | null;
     slopeSuitability: number;
-    /** Active mission interval windows [selectedTimeMs, selectedTimeMs + missionDuration] */
     visibilityWindows: VisibilityWindow[];
     sunlightWindows: VisibilityWindow[];
-    /** Full timeline block windows so the timeline track & recommendations never become partial */
     timelineVisibilityWindows: VisibilityWindow[];
     timelineSunlightWindows: VisibilityWindow[];
     hasTimelineBlockData: boolean;
