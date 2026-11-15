@@ -1,12 +1,6 @@
 import re
 import requests
-from .evaluation import (
-    EPHEMERIS_START,
-    EPHEMERIS_STEP,
-    EPHEMERIS_STEP_HOURS,
-    EPHEMERIS_STOP,
-    availability_metrics,
-)
+from .evaluation import (EPHEMERIS_START, EPHEMERIS_STEP, EPHEMERIS_STEP_HOURS, EPHEMERIS_STOP, availability_metrics)
 from .terrain_horizon import get_terrain_horizon, is_body_visible
 
 HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -105,10 +99,7 @@ def get_blocking_angle(target_az: float, terrain_map: dict) -> float:
         return 0.0
 
     normalized_az = target_az % 360.0
-    closest_az = min(
-        terrain_map.keys(),
-        key=lambda a: min(abs(a - normalized_az), 360.0 - abs(a - normalized_az)),
-    )
+    closest_az = min(terrain_map.keys(), key=lambda a: min(abs(a - normalized_az), 360.0 - abs(a - normalized_az)),)
     blocking_angle = terrain_map[closest_az]
     return blocking_angle if blocking_angle is not None else 0.0
 

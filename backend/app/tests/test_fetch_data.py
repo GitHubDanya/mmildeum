@@ -1,7 +1,6 @@
 """Integration tests for scoring in the site-data response."""
 
 import pytest
-
 from app import routes
 
 
@@ -40,9 +39,7 @@ def _patch_site_services(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_fetch_data_returns_score_and_provenance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_fetch_data_returns_score_and_provenance(monkeypatch: pytest.MonkeyPatch,) -> None:
     _patch_site_services(monkeypatch)
 
     response = routes.fetch_data(10.0, 20.0, None, 250.0)
@@ -55,9 +52,7 @@ def test_fetch_data_returns_score_and_provenance(
     assert response.scoring.metadata["slope_sample_count"] == 25
 
 
-def test_fetch_data_reports_insufficient_scoring_data(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_fetch_data_reports_insufficient_scoring_data(monkeypatch: pytest.MonkeyPatch,) -> None:
     _patch_site_services(monkeypatch)
     monkeypatch.setattr(routes, "get_average_sun_angle", lambda lat, lon: None)
 

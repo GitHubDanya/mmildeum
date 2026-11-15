@@ -20,15 +20,7 @@ class FetchDataResponse(BaseModel):
     terrain_elevation_m: float | None = None
     visibility_windows: list | None = None
     ground_angle_deg: float | None = None
-    lola_roughness_deg: float | None = Field(
-        default=None,
-        description="LOLA median absolute along-track slope in degrees over a 225 m baseline.",
-    )
-    score: float | None = Field(
-        default=None,
-        ge=0,
-        le=100,
-        description="Independent fixed-ideal TOPSIS landing-site score.",
-    )
+    lola_roughness_deg: float | None = Field(default=None, description="LOLA median absolute along-track slope in degrees over a 225 m baseline.",)
+    score: float | None = Field(default=None, ge=0, le=100, description="Independent fixed-ideal TOPSIS landing-site score.",)
     scoring_metrics: dict[str, float | None] = Field(default_factory=dict)
     scoring: ScoringResult

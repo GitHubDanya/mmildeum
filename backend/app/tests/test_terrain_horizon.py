@@ -23,13 +23,7 @@ LAT = -89.5
 LON = 0.0
 
 
-def make_dem(
-    tmp_path: Path,
-    *,
-    ridge: bool = False,
-    gap: bool = False,
-    lon: float = LON,
-) -> Path:
+def make_dem(tmp_path: Path,*, ridge: bool = False, gap: bool = False, lon: float = LON,) -> Path:
     """Accept a directory, terrain flags and longitude; return a DEM path."""
     crs = CRS.from_user_input(MOON_CRS)
     # Enforce longitude-latitude input order regardless of CRS axis definitions.

@@ -268,11 +268,7 @@ def get_ground_angle(lat: float, lon: float) -> float | None:
     return _read_global_terrain(lat, lon, slope=True)
 
 
-def get_slope_footprint_p95(
-    lat: float,
-    lon: float,
-    footprint_radius_m: float = DEFAULT_FOOTPRINT_RADIUS_M,
-) -> dict[str, float | int] | None:
+def get_slope_footprint_p95(lat: float, lon: float, footprint_radius_m: float = DEFAULT_FOOTPRINT_RADIUS_M,) -> dict[str, float | int] | None:
     """Sample a circular landing footprint and return its 95th-percentile slope.
 
     The footprint uses the center, eight points at half-radius, and sixteen
@@ -284,17 +280,9 @@ def get_slope_footprint_p95(
         raise ValueError("[terrain.py] Footprint radius must be a positive finite number!")
 
     coordinates = [(lon, lat)]
-    for distance_m, count in (
-        (footprint_radius_m / 2.0, 8),
-        (footprint_radius_m, 16),
-    ):
+    for distance_m, count in ((footprint_radius_m / 2.0, 8), (footprint_radius_m, 16),):
         for index in range(count):
-            sample_lon, sample_lat, _ = GLOBAL_GEOD.fwd(
-                lon,
-                lat,
-                index * 360.0 / count,
-                distance_m,
-            )
+            sample_lon, sample_lat, _ = GLOBAL_GEOD.fwd(lon, lat, index * 360.0 / count, distance_m,)
             coordinates.append((sample_lon, sample_lat))
 
     slopes = []
@@ -309,10 +297,7 @@ def get_slope_footprint_p95(
     lower_index = floor(rank)
     upper_index = min(lower_index + 1, len(ordered) - 1)
     fraction = rank - lower_index
-    slope_p95 = (
-        ordered[lower_index]
-        + fraction * (ordered[upper_index] - ordered[lower_index])
-    )
+    slope_p95 = (ordered[lower_index] + fraction * (ordered[upper_index] - ordered[lower_index]))
 
     return {
         "slope_p95_degrees": slope_p95,

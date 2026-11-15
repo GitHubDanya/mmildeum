@@ -5,9 +5,7 @@ import pytest
 from app.services import terrain
 
 
-def test_slope_footprint_returns_interpolated_p95(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_slope_footprint_returns_interpolated_p95(monkeypatch: pytest.MonkeyPatch) -> None:
     slopes = iter(float(value) for value in range(25))
     monkeypatch.setattr(terrain, "get_ground_angle", lambda lat, lon: next(slopes))
 
@@ -19,11 +17,8 @@ def test_slope_footprint_returns_interpolated_p95(
     assert result["footprint_radius_m"] == 250.0
 
 
-def test_slope_footprint_requires_every_sample(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_slope_footprint_requires_every_sample(monkeypatch: pytest.MonkeyPatch,) -> None:
     monkeypatch.setattr(terrain, "get_ground_angle", lambda lat, lon: None)
-
     assert terrain.get_slope_footprint_p95(0.0, 0.0, 250.0) is None
 
 

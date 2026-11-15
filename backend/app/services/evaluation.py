@@ -2,19 +2,14 @@
 
 from collections.abc import Sequence
 
-
 EPHEMERIS_START = "2026-11-01"
 EPHEMERIS_STOP = "2026-11-30 12:44"
 EPHEMERIS_STEP = "2 h"
 EPHEMERIS_STEP_HOURS = 2.0
-
 DEFAULT_FOOTPRINT_RADIUS_M = 250.0
 
 
-def availability_metrics(
-    available: Sequence[bool],
-    step_hours: float = EPHEMERIS_STEP_HOURS,
-) -> tuple[float, float] | None:
+def availability_metrics(available: Sequence[bool], step_hours: float = EPHEMERIS_STEP_HOURS,) -> tuple[float, float] | None:
     """Return available-time fraction and longest unavailable run.
 
     Each Boolean sample represents one regular interval of ``step_hours``.
