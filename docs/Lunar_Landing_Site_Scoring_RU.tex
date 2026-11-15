@@ -1,214 +1,232 @@
 \documentclass[10pt,a4paper]{article}
-\usepackage[a4paper,top=20mm,bottom=20mm,left=19mm,right=19mm,headheight=15pt]{geometry}
+\usepackage[a4paper,top=20mm,bottom=18mm,left=18mm,right=18mm,headheight=14pt]{geometry}
 \usepackage{fontspec}
-\setmainfont{Noto Sans}
-\setsansfont{Noto Sans}
-\setmonofont{DejaVu Sans Mono}[Scale=0.82]
+\usepackage{unicode-math}
+\setmainfont{Cambria}
+\setmathfont{Cambria Math}
+\setmonofont{Consolas}[Scale=0.82]
 \usepackage{polyglossia}
 \setdefaultlanguage{russian}
 \setotherlanguage{english}
-\usepackage{amsmath,amssymb,mathtools}
-\usepackage{array,tabularx,booktabs,longtable,multirow}
+
+\usepackage{array,tabularx,booktabs}
 \usepackage{microtype}
-\usepackage[dvipsnames]{xcolor}
-\usepackage{tikz}
-\usepackage[most]{tcolorbox}
 \usepackage{enumitem}
 \usepackage{fancyhdr}
 \usepackage{lastpage}
 \usepackage{titlesec}
-\usepackage[unicode,colorlinks=true,linkcolor=DeepBlue,urlcolor=DeepBlue]{hyperref}
-\definecolor{Midnight}{HTML}{15283F}
-\definecolor{DeepBlue}{HTML}{17669A}
-\definecolor{Slate}{HTML}{4D6276}
-\definecolor{Cloud}{HTML}{EFF5F8}
-\definecolor{LineGray}{HTML}{DDE7EC}
-\definecolor{Mint}{HTML}{167C76}
-\definecolor{Burnt}{HTML}{B06B23}
-\color{Midnight}
+\usepackage[hidelinks,unicode]{hyperref}
+
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{4.2pt}
-\setlist[itemize]{leftmargin=*,itemsep=2pt,topsep=3pt}
-\setlist[enumerate]{leftmargin=*,itemsep=3pt,topsep=3pt}
-\renewcommand{\arraystretch}{1.32}
-\titleformat{\section}{\Large\bfseries\color{Midnight}}{\thesection}{0.65em}{}
-\titlespacing*{\section}{0pt}{12pt}{5pt}
-\titleformat{\subsection}{\normalsize\bfseries\color{DeepBlue}}{\thesubsection}{0.6em}{}
-\titlespacing*{\subsection}{0pt}{10pt}{4pt}
-\newtcolorbox{notebox}[1][]{enhanced,breakable,colback=Cloud,colframe=LineGray,boxrule=0.6pt,arc=1.5mm,left=10pt,right=10pt,top=7pt,bottom=7pt,#1}
-\newtcolorbox{formulaBox}[1][]{enhanced,breakable,colback=Cloud,colframe=DeepBlue,boxrule=0.85pt,arc=2mm,left=11pt,right=11pt,top=10pt,bottom=9pt,#1}
-\newcommand{\term}[1]{\textbf{#1}}
-\newcommand{\tinylabel}[1]{{\footnotesize\bfseries\color{DeepBlue} #1}}
+\setlength{\parskip}{4pt}
+\setlength{\emergencystretch}{2em}
+\setlist[enumerate]{leftmargin=*,itemsep=2pt,topsep=3pt}
+\renewcommand{\arraystretch}{1.18}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcommand{\code}[1]{{\ttfamily\small #1}}
-\newcommand{\tight}{\vspace{-2pt}}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.65em}{}
+\titlespacing*{\section}{0pt}{10pt}{4pt}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titlespacing*{\subsection}{0pt}{8pt}{3pt}
+
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{\footnotesize\color{Slate}\textbf{LUNAR LANDING SITE NAVIGATOR}}
-\fancyhead[R]{\footnotesize\color{Slate} Алгоритм / RU}
-\fancyfoot[L]{\footnotesize\color{Slate} Проектная модель оценки  |  v1.0}
-\fancyfoot[R]{\footnotesize\color{Slate} \thepage\ / \pageref{LastPage}}
+\fancyhead[L]{\footnotesize LLSN-TN-001}
+\fancyhead[C]{\footnotesize Ред. A}
+\fancyhead[R]{\footnotesize 15.11.2026}
+\fancyfoot[C]{\footnotesize Страница \thepage\ из \pageref{LastPage}}
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\footrulewidth}{0pt}
-\setlength{\headsep}{12pt}
+\setlength{\headsep}{10pt}
+
 \begin{document}
-{\footnotesize\bfseries\color{DeepBlue} ТЕХНИЧЕСКАЯ ЗАПИСКА  /  МАТЕМАТИЧЕСКАЯ МОДЕЛЬ}\par\vspace{3pt}
-{\fontsize{23}{28}\selectfont\bfseries Оценка пригодности места посадки}\par\vspace{5pt}
-{\normalsize\color{Slate} Fixed-ideal TOPSIS, освещённость, видимость Земли и ограничения по рельефу}\par\vspace{11pt}
-\noindent\color{DeepBlue}\rule{\linewidth}{1.15pt}\color{Midnight}
-\vspace{8pt}
 
-\begin{notebox}
-\textbf{Цель.} Оценить пригодность точки посадки на Луне по доступности солнечного освещения, прямой видимости Земли и уклону поверхности. Одна и та же функция позволяет рассчитывать \emph{независимый балл} для каждой точки и сравнивать несколько вариантов без изменения шкалы под выбранный набор точек.
+\begin{center}
+{\LARGE\bfseries Оценка пригодности места посадки\par}
+\vspace{4pt}
+{\large Модель fixed-ideal TOPSIS для предварительного отбора лунных площадок\par}
+\vspace{10pt}
+{\normalsize Команда проекта MmilDeum\par}
+{\small NASA Space Apps Challenge\par}
+{\small 15 ноября 2026 г.\par}
+\end{center}
 
-\textbf{Важно:} это предложенный, настраиваемый \emph{индекс пригодности для миссии}, а не одобренная NASA оценка безопасности посадки и не вероятность успешной посадки.
-\end{notebox}
+\section*{Аннотация}
+В технической записке определен настраиваемый индекс для независимой оценки лунных посадочных площадок по освещенности, прямой видимости Земли, длительности перерывов и уклону поверхности. Пять измеряемых величин нормализуются и объединяются методом fixed-ideal TOPSIS, а ограничения миссии проверяются отдельно как условия допустимости. Фиксированные идеальный и антиидеальный векторы обеспечивают сопоставимость баллов при изменении набора кандидатов. Модель предназначена для предварительного анализа вариантов; она не является методом летной сертификации или оценкой вероятности успеха. Ограничения и веса конкретной миссии, энергобаланс, тепловой режим, связь, динамика посадки, навигационная неопределенность и локальные опасности требуют отдельных инженерных моделей.
+
+\section*{Обозначения}
+\small
+\begin{tabularx}{\linewidth}{@{}L{0.10\linewidth}Y L{0.12\linewidth}Y@{}}
+\toprule
+\textbf{Символ} & \textbf{Определение} & \textbf{Символ} & \textbf{Определение}\\
+\midrule
+$p$ & Площадка $(\varphi,\lambda)$ & $[t_0,t_1]$ & Интервал расчета\\
+$T$ & Длительность интервала & $\Delta t$ & Шаг дискретизации\\
+$H_p(a)$ & Высота рельефного горизонта при азимуте $a$ & $u_S,u_E$ & Индикаторы видимости Солнца и Земли\\
+$I,V$ & Доли освещения и видимости Земли & $D,B$ & Максимальная темнота и потеря видимости Земли\\
+$\theta_{95}$ & 95-й процентиль уклона площадки & $\tau_P,\tau_C$ & Временные масштабы перерывов\\
+$\theta_{\mathrm{ref}}$ & Опорный масштаб уклона & $z_i,w_i$ & Нормированные показатели и веса\\
+$d_+,d_-$ & Расстояния до идеала и антиидеала & $S(p)$ & Итоговый балл\\
+$\mathcal{F}(p)$ & Результат проверки допустимости & $\theta_{\max},D_{\max},B_{\max}$ & Ограничения миссии\\
+\bottomrule
+\end{tabularx}
+\normalsize
 
 \section{Входные данные и измеряемые величины}
-Для точки $p=(\varphi,\lambda)$, интервала миссии $[t_0,t_1]$ продолжительностью $T=t_1-t_0$ и шага расчёта $\Delta t$ используем:
+Для площадки $p$, интервала $[t_0,t_1]$ и шага $\Delta t$ вычислительный конвейер использует следующие источники.
 
-\begin{tabularx}{\linewidth}{@{}p{0.27\linewidth} X p{0.18\linewidth}@{}}
+\small
+\begin{tabularx}{\linewidth}{@{}L{0.23\linewidth}Y L{0.20\linewidth}@{}}
 \toprule
-\textbf{Источник} & \textbf{Получаемые и производные значения} & \textbf{Назначение}\\
+\textbf{Источник} & \textbf{Получаемые или производные величины} & \textbf{Назначение}\\
 \midrule
-JPL Horizons (через Astroquery) & Азимут $a_{S,E}(t)$ и высота над горизонтом $e_{S,E}(t)$ Солнца и Земли для наблюдателя на Луне & Геометрия видимости\\
-Цифровая модель высот LOLA & Растр высот $z(x,y)$; оценка уклона в пределах области посадки & Горизонт и рельеф\\
-Вычисления backend & Профиль горизонта $H_p(a)$, интервалы освещения и видимости Земли, максимальные перерывы, квантиль уклона & Метрики оценки\\
+API JPL Horizons \cite{horizons} & Азимут $a_{S,E}(t)$ и высота $e_{S,E}(t)$ Солнца и Земли для наблюдателя на Луне & Геометрия видимости\\
+Данные высот LOLA \cite{smith2010} & Растр высот $z(x,y)$ и выборка уклонов в области посадки & Горизонт и уклон\\
+Вычисления backend & $H_p(a)$, интервалы видимости, длительности перерывов и $\theta_{95}$ & Метрики и происхождение данных\\
 \bottomrule
 \end{tabularx}
+\normalsize
 
-\emph{Абсолютная} высота точки и название геологического типа не дают автоматического бонуса к оценке: большая высота сама по себе не означает безопасность, а общая геологическая категория не равна измеренному риску посадки.
-
-\subsection{Видимость во времени}
-Пусть $H_p(a)$ --- угол местного горизонта в направлении азимута $a$, вычисленный по DEM с учётом высоты наблюдателя и кривизны Луны. Определим индикаторы:
-\begin{align}
- u_S(t)&=\mathbb{1}\!\left[e_S(t)>H_p(a_S(t))\right],\\[-2pt]
- u_E(t)&=\mathbb{1}\!\left[e_E(t)>H_p(a_E(t))\right].
-\end{align}
-Индикатор равен $1$, если соответствующее небесное тело находится выше местного горизонта, иначе $0$. Тогда
-\begin{equation}
- I=\frac{1}{T}\int_{t_0}^{t_1}u_S(t)\,dt, \qquad
- V=\frac{1}{T}\int_{t_0}^{t_1}u_E(t)\,dt .
-\end{equation}
-Здесь $I$ --- доля времени с освещением, $V$ --- доля времени с прямой видимостью Земли. $D$ --- \textbf{самый длинный непрерывный период, когда $u_S=0$}, а $B$ --- \textbf{самый длинный непрерывный период, когда $u_E=0$}. Обе длительности измеряются в часах. При дискретном расчёте интегралы и границы интервалов определяются приближённо.
+Абсолютная высота и геологический класс сохраняются как описательные признаки, но не входят в итоговый балл. Данные высот используются для расчета рельефного горизонта и уклона площадки. Глобальный продукт LOLA \code{MAS\_225M\_16} содержит медианный абсолютный уклон вдоль трассы на базе 225 м в градусах \cite{rosenburg2011,pgda}. Он служит описательным параметром и исключен из балла и ограничений допустимости.
 
 \newpage
-\section{Нормализация показателей к $[0,1]$}
-Используем пять безразмерных метрик $z_i$: чем больше значение, тем лучше. Два экспоненциальных множителя штрафуют за длительные непрерывные перерывы:
-\begin{formulaBox}
-\begin{align*}
- z_1 &= I, && \text{доля освещённого времени},\\
- z_2 &= \exp\!\left(-\frac{D}{\tau_P}\right), && \text{штраф за темноту},\\
- z_3 &= V, && \text{доля видимости Земли},\\
- z_4 &= \exp\!\left(-\frac{B}{\tau_C}\right), && \text{штраф за потерю связи},\\
- z_5 &= \max\!\left[0,1-\left(\frac{\theta_{95}}{\theta_{\mathrm{ref}}}\right)^2\right], && \text{пригодность уклона}.
-\end{align*}
-\end{formulaBox}
-$\theta_{95}$ --- 95-й процентиль уклона по всей рассматриваемой площадке посадки, а не наклон одного пикселя. Параметры $\tau_P$ и $\tau_C$ определяют форму штрафов; они \textbf{не гарантируют} время работы батареи или канала связи. $\theta_{\mathrm{ref}}$ задаёт масштаб штрафа за уклон.
 
-\begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}p{0.23\linewidth}X@{}}
-\toprule
-\textbf{Параметр} & \textbf{Пример значения} & \textbf{Смысл}\\
-\midrule
-$\tau_P$ & $24$ ч & Масштаб штрафа за темноту\\
-$\tau_C$ & $120$ ч & Масштаб штрафа за потерю видимости Земли\\
-$\theta_{\mathrm{ref}}$ & $10^\circ$ & Масштаб штрафа за уклон\\
-\bottomrule
-\end{tabularx}
-
-\begin{notebox}
-Эти значения --- \emph{проектные допущения}, а не нормативы NASA. Для реального аппарата ограничения и веса определяются конструкцией солнечных панелей, аккумулятора, тепловой системы, антенны и размерами посадочной площадки.
-\end{notebox}
-
-\section{Независимый итоговый балл: fixed-ideal TOPSIS}
-Выберем неотрицательные веса $w_i$ так, чтобы $\sum_{i=1}^{5}w_i=1$. Начальный вариант весов:
+\section{Метрики видимости}
+Пусть $H_p(a)$ обозначает высоту рельефного горизонта при азимуте $a$ с учетом высоты наблюдателя и кривизны Луны. Определим
+\begin{align}
+u_S(t)&=\mathbb{1}\!\left[e_S(t)>H_p(a_S(t))\right],\\
+u_E(t)&=\mathbb{1}\!\left[e_E(t)>H_p(a_E(t))\right].
+\end{align}
+Индикатор равен единице, когда соответствующее небесное тело находится выше местного рельефного горизонта. Доли доступности равны
 \begin{equation}
-\boldsymbol{w}=(0.25,\ 0.20,\ 0.15,\ 0.10,\ 0.30),\qquad
+I=\frac{1}{T}\int_{t_0}^{t_1}u_S(t)\,dt,
+\qquad
+V=\frac{1}{T}\int_{t_0}^{t_1}u_E(t)\,dt.
+\end{equation}
+Величина $D$ определяется как \emph{самый длинный непрерывный интервал}, на котором $u_S=0$; величина $B$ определяется аналогично для $u_E=0$. Обе длительности измеряются в часах. Дискретный расчет приближенно определяет интегралы и границы интервалов.
+
+\section{Нормализация метрик}
+Пять входных величин преобразуются в безразмерные показатели $z_i\in[0,1]$:
+\begin{align}
+z_1 &= I, & z_2 &= \exp\!\left(-\frac{D}{\tau_P}\right),\\
+z_3 &= V, & z_4 &= \exp\!\left(-\frac{B}{\tau_C}\right),\\
+z_5 &= \max\!\left[0,1-\left(\frac{\theta_{95}}{\theta_{\mathrm{ref}}}\right)^2\right].
+\end{align}
+$\theta_{95}$ вычисляется по выбранной области посадки. Начальные опорные значения: $\tau_P=24$ ч, $\tau_C=120$ ч и $\theta_{\mathrm{ref}}=10^\circ$. Эти параметры задают форму кривых оценки и заменяются значениями конкретной миссии после определения требований аппарата.
+
+\section{Итоговый балл fixed-ideal TOPSIS}
+Неотрицательные веса удовлетворяют условию $\sum_{i=1}^{5}w_i=1$. Начальный вектор весов имеет вид
+\begin{equation}
+\boldsymbol{w}=(0.25,\ 0.20,\ 0.15,\ 0.10,\ 0.30),
+\qquad
 \boldsymbol{z}=(z_1,\ldots,z_5).
 \end{equation}
-Таким образом, доля освещения и длительность темноты вместе дают $45\%$ веса; видимость Земли и перерывы связи --- $25\%$; уклон поверхности --- $30\%$.
-
-Каждая точка сравнивается с одним и тем же \emph{фиксированным} идеалом $\boldsymbol{1}$ и худшим вектором $\boldsymbol{0}$. Поэтому добавление других кандидатов не меняет балл точки:
+На освещение и темноту приходится 45\% веса, на видимость Земли и перерывы -- 25\%, на уклон -- 30\%. Каждая площадка сравнивается с фиксированным идеалом $\boldsymbol{1}$ и антиидеалом $\boldsymbol{0}$:
 \begin{align}
- d_+(p)&=\sqrt{\sum_{i=1}^{5}w_i\,(1-z_i(p))^2},\\
- d_-(p)&=\sqrt{\sum_{i=1}^{5}w_i\,z_i(p)^2}.
+d_+(p)&=\sqrt{\sum_{i=1}^{5}w_i\,[1-z_i(p)]^2},\\
+d_-(p)&=\sqrt{\sum_{i=1}^{5}w_i\,z_i(p)^2}.
 \end{align}
-\begin{formulaBox}
-\centering
-{\Large $\displaystyle
-\boxed{S(p)=100\,\frac{d_-(p)}{d_+(p)+d_-(p)}}$}\par\vspace{6pt}
-$0\leq S\leq100$; $S=100$ только если все пять нормализованных показателей равны $1$.
-\end{formulaBox}
+Итоговый балл равен
+\begin{equation}
+\boxed{S(p)=100\,\frac{d_-(p)}{d_+(p)+d_-(p)}}.
+\label{eq:score}
+\end{equation}
+Следовательно, $0\leq S\leq100$, а добавление или удаление кандидата не меняет уже рассчитанный балл.
 
+\newpage
 
-\section{Жёсткие ограничения и недостаток данных}
-Высокий итоговый балл не должен перекрывать реальные ограничения миссии. Для заданных пределов $\theta_{\max}$, $D_{\max}$ и $B_{\max}$ определим
+\section{Ограничения и качество данных}
+Численный балл и допустимость для миссии возвращаются раздельно. Для заданных пределов
 \begin{equation}
 \mathcal{F}(p)=
 (\theta_{95}\leq\theta_{\max})\land
 (D\leq D_{\max})\land
-(B\leq B_{\max}) .
+(B\leq B_{\max}).
 \end{equation}
-Ограничения на темноту и связь применяются, только если они заданы для миссии. При $\mathcal{F}=0$ точка остаётся в отчёте, но \textbf{не рекомендуется}. Масштаб штрафа $\theta_{\mathrm{ref}}$ и жёсткий предел $\theta_{\max}$ могут различаться.
+Ограничения по темноте и связи применяются только при наличии требований миссии. Площадка, нарушившая предел, сохраняется в результатах с \code{feasible=false} и соответствующими записями в \code{failed\_constraints}; допустимые площадки ранжируются выше недопустимых.
 
-Если не хватает DEM, данных эфемерид или измерений по площадке посадки, нужно возвращать статус \code{insufficient\_data}, а не считать неизвестное значение нулевым или предполагать, что площадка безопасна. Вместе с оценкой следует сохранять разрешение DEM, шаг времени, размер площадки и источники данных.
+Если недоступны DEM, эфемериды или полная выборка уклонов по площадке, возвращается \code{insufficient\_data}. Для каждого результата сохраняются разрешение DEM, шаг времени, размеры площадки и идентификаторы источников.
 
-\section{Сравнение двух мест посадки}
-Для точек $A$ и $B$ должны совпадать \textbf{даты миссии}, шаг расчёта, определение посадочной площадки, веса и параметры нормализации. Разница оценок:
+\section{Сравнение двух площадок}
+Площадки $A$ и $B$ оцениваются при одинаковых датах миссии, шаге расчета, определении области посадки, весах и параметрах нормализации. Разность баллов равна
 \begin{equation}
 \Delta S=S(A)-S(B).
 \end{equation}
-Точка $A$ \emph{доминирует по Парето} над $B$, если
+Площадка $A$ \emph{доминирует по Парето} над площадкой $B$, если
 \begin{equation}
-\left(\forall i,\ z_i(A)\geq z_i(B)\right)
-\land \left(\exists j,\ z_j(A)>z_j(B)\right).
+\bigl(\forall i,\ z_i(A)\geq z_i(B)\bigr)
+\land
+\bigl(\exists j,\ z_j(A)>z_j(B)\bigr).
 \end{equation}
-Если доминирования нет, итог зависит от компромисса между критериями и выбранных весов. Допустимые точки ранжируются выше недопустимых независимо от численного балла. Малую разницу нельзя считать убедительной, если она сопоставима с погрешностью модели или измерений.
+Если доминирования нет, предпочтение зависит от выбранных компромиссов и статуса допустимости.
 
 \section{Численный пример}
-Рассмотрим две \emph{гипотетические} точки и используем приведённые выше значения параметров. Предположим, что данных достаточно и обе точки проходят отдельно заданные ограничения миссии.
+Рассмотрим две условные площадки с полными данными, не нарушающие ограничения миссии.
 
 \begin{center}
+\small
 \begin{tabular}{@{}lrr@{}}
 \toprule
-\textbf{Показатель} & \textbf{Точка A} & \textbf{Точка B}\\
+\textbf{Показатель} & \textbf{Площадка A} & \textbf{Площадка B}\\
 \midrule
-Доля освещённого времени $I$ & $0.80$ & $0.72$\\
+Доля освещения $I$ & $0.80$ & $0.72$\\
 Максимальная темнота $D$ & $8$ ч & $3$ ч\\
 Доля видимости Земли $V$ & $0.45$ & $0.63$\\
 Максимальный перерыв связи $B$ & $120$ ч & $80$ ч\\
 Уклон площадки $\theta_{95}$ & $4^\circ$ & $6^\circ$\\
 \midrule
-Нормализованный вектор $\boldsymbol{z}$ & $(.800,.717,.450,.368,.840)$ & $(.720,.882,.630,.513,.640)$\\
+Нормированный $\boldsymbol{z}$ & $(.800,.717,.450,.368,.840)$ & $(.720,.882,.630,.513,.640)$\\
 \bottomrule
 \end{tabular}
 \end{center}
-\begin{formulaBox}
-\centering
-$\displaystyle S(A)=67.60,\qquad S(B)=68.40,\qquad\Delta S=-0.80.$\\[5pt]
-\textbf{Итог:} по исходным весам точка B немного лучше. Ни одна точка не доминирует другую по Парето.
-\end{formulaBox}
-В точке A больше суммарного освещения и меньше уклон. В точке B короче темнота и лучше связь с Землёй. Разница в $0.80$ балла мала: без анализа чувствительности и погрешностей её нельзя считать окончательным доказательством превосходства.
+Расчет по формуле~\eqref{eq:score} дает
+\begin{equation}
+S(A)=67.60,\qquad S(B)=68.40,\qquad \Delta S=-0.80.
+\end{equation}
+Площадка B получает немного больший балл при начальных весах; ни одна площадка не доминирует по Парето. Площадка A лучше по суммарному освещению и уклону, а площадка B -- по длительности перерывов и видимости Земли.
 
 \newpage
-\section{Контракт backend и проверка алгоритма}
-\textbf{Основная функция:} \code{score\_site(metrics, mission\_config)}. Минимальный набор полей ответа:
-\begin{notebox}
-\code{score} (0--100); \code{feasible} (логическое значение или null при неизвестном статусе); \code{failed\_constraints} (список); \code{normalized\_metrics} ($z_1\dots z_5$); \code{model\_version}; \code{data\_quality}.
-\end{notebox}
-Функция \code{compare\_sites(A, B, config)} должна вернуть две независимые оценки, $\Delta S$, статусы допустимости и результат проверки Парето ($A$, $B$ либо ни одна).
 
-\textbf{Минимальные автоматические тесты:}
+\appendix
+\section{Программный интерфейс и проверка}
+Основной интерфейс -- \code{score\_site(metrics, mission\_config)}. Результат содержит \code{score}, \code{feasible}, \code{failed\_constraints}, \code{normalized\_metrics}, \code{model\_version} и \code{data\_quality}. Функция \code{compare\_sites(A, B, config)} возвращает два независимых балла, $\Delta S$, статусы допустимости, предпочтительную площадку и результат проверки Парето.
+
+Минимальный набор проверок:
 \begin{enumerate}
-\item $\boldsymbol z=\boldsymbol0\Rightarrow S=0$; $\boldsymbol z=\boldsymbol1\Rightarrow S=100$.
-\item Добавление кандидата не меняет оценки других точек.
-\item Недопустимая крутая площадка не становится рекомендованной только из-за большого освещения.
-\item Увеличение периода темноты или потери связи при прочих равных не улучшает оценку.
-\item Отклоняются некорректные доли, отрицательные длительности, бесконечные и неопределённые числа, неположительные параметры и неполные исходные данные.
+\item $\boldsymbol{z}=\boldsymbol{0}\Rightarrow S=0$ и $\boldsymbol{z}=\boldsymbol{1}\Rightarrow S=100$.
+\item Добавление кандидата не меняет существующий балл.
+\item Ограничения допустимости имеют приоритет над численным баллом.
+\item Увеличение $D$ или $B$ при неизменных остальных входах не улучшает балл.
+\item Некорректные доли, длительности, масштабы, веса и неполное покрытие отклоняются либо отмечаются как недостаточные данные.
 \item Численный пример воспроизводится с точностью $0.01$ балла.
 \end{enumerate}
-\textbf{Ограничения модели.} Это модель ранжирования, а не полноценная симуляция посадки или энергосистемы. Камни, края кратеров в посадочном эллипсе, термостойкость, ретрансляторы, угол падения света на конкретную панель и ошибки навигации требуют отдельных моделей до любых заявлений о безопасности миссии.
 
-\vspace{5pt}
-{\footnotesize\color{Slate}\textbf{Документация данных:} \href{https://ssd.jpl.nasa.gov/horizons/}{JPL Horizons}; \href{https://docs.astropy.org/projects/astroquery/en/latest/jplhorizons/jplhorizons.html}{Astroquery Horizons}; \href{https://ode.rsl.wustl.edu/moon/}{Lunar Orbital Data Explorer (данные LOLA)}. Сама функция оценки предложена командой проекта.}
+\section*{История редакций}
+\small
+\begin{tabularx}{\linewidth}{@{}L{0.13\linewidth}L{0.20\linewidth}Y L{0.20\linewidth}@{}}
+\toprule
+\textbf{Редакция} & \textbf{Дата} & \textbf{Описание} & \textbf{Подготовил}\\
+\midrule
+A & 15.11.2026 & Первый контролируемый выпуск модели оценки v1.0 & Команда MmilDeum\\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\begin{thebibliography}{9}
+\small
+\bibitem{rosenburg2011}
+M. A. Rosenburg, O. Aharonson, J. W. Head, M. A. Kreslavsky, E. Mazarico, G. A. Neumann, D. E. Smith, M. H. Torrence, and M. T. Zuber, ``Global surface slopes and roughness of the Moon from the Lunar Orbiter Laser Altimeter,'' \emph{Journal of Geophysical Research: Planets}, vol. 116, E02001, 2011. \href{https://doi.org/10.1029/2010JE003716}{doi:10.1029/2010JE003716}.
+
+\bibitem{pgda}
+NASA Goddard Space Flight Center, Planetary Geology, Geophysics and Geochemistry Laboratory, ``Lunar slopes and Hurst exponent,'' Product 70. \url{https://pgda.gsfc.nasa.gov/products/70}, дата обращения 15.11.2026.
+
+\bibitem{horizons}
+Jet Propulsion Laboratory, Solar System Dynamics, документация ``Horizons System'' и ``Horizons API''. \url{https://ssd.jpl.nasa.gov/horizons/} и \url{https://ssd-api.jpl.nasa.gov/doc/horizons.html}, дата обращения 15.11.2026.
+
+\bibitem{smith2010}
+D. E. Smith et al., ``The Lunar Orbiter Laser Altimeter Investigation on the Lunar Reconnaissance Orbiter Mission,'' \emph{Space Science Reviews}, vol. 150, pp. 209--241, 2010. \href{https://doi.org/10.1007/s11214-009-9512-y}{doi:10.1007/s11214-009-9512-y}.
+\end{thebibliography}
 
 \end{document}

@@ -1,60 +1,103 @@
 import logging
+import os
 import sys
 from http.client import HTTPException
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from urllib.request import urlopen
+
 import rasterio
 from rasterio.errors import RasterioError
-from .terrain import ELEVATION_MAP, TERRAIN_MAP
 
-NASA_DATA_URL = "https://pgda.gsfc.nasa.gov/data/LOLA_20mpp"
+from .terrain import (
+    ELEVATION_MAP,
+    GLOBAL_ELEVATION_MAP,
+    GLOBAL_EQC_ELEVATION_MAP,
+    LOLA_ROUGHNESS_FILE_SIZE,
+    LOLA_ROUGHNESS_MAP,
+    ROUGHNESS_CLASS_MAP,
+)
+
+RASTER_SERVER_URL = os.getenv("RASTER_SERVER_URL", "http://85.130.207.70:19508")
 CHUNK_SIZE = 1024 * 1024
+
+GLOBAL_64PPD_MAPS = {GLOBAL_ELEVATION_MAP, GLOBAL_EQC_ELEVATION_MAP}
+ALL_RASTER_MAPS = (
+    ELEVATION_MAP,
+    ROUGHNESS_CLASS_MAP,
+    GLOBAL_ELEVATION_MAP,
+    GLOBAL_EQC_ELEVATION_MAP,
+    LOLA_ROUGHNESS_MAP,
+)
+
 logger = logging.getLogger("uvicorn.error").getChild(__name__)
 
 
 def ensure_terrain_maps() -> None:
-    """
-    Download any missing LOLA terrain and elevation maps from NASA PGDA.
-    Maps already on disk are skipped. A failed download is logged as a warning instead of raised,
-    so the server starts without that map and the download is retried on the next startup.
-    """
-    for destination in (TERRAIN_MAP, ELEVATION_MAP):
-        if destination.is_file():
-            continue
+    base_url = RASTER_SERVER_URL.rstrip("/")
 
+    for destination in ALL_RASTER_MAPS:
         try:
-            _download_map(destination)
+            if _has_valid_map(destination):
+                continue
+
+            if destination.exists():
+                logger.warning("Existing %s is corrupt or incomplete; re-downloading.", destination.name)
+
+            _download_map(destination, f"{base_url}/{destination.name}")
         except (OSError, HTTPException, RasterioError) as e:
-            logger.warning("[raster_download.py] Could not download %s. Starting without it. The next startup will retry. %s!", destination.name, e)
+            logger.warning(
+                "Could not download %s. Starting without it. The next startup will retry. %s",
+                destination.name,
+                e,
+            )
 
 
-def _download_map(destination: Path) -> None:
-    """
-    Download one LOLA GeoTIFF from NASA PGDA and move it to its destination once it is validated.
-    The file is streamed in 1 MiB chunks to a temporary .part file next to the destination, with a
-    progress bar on stderr when stderr is a terminal. The temporary file replaces the destination
-    only if its size matches Content-Length and it opens as a projected GeoTIFF with at least one band;
-    otherwise it is deleted.
-    :param destination: Local path for the map; its file name is also the file requested from NASA PGDA
-    :type destination: Path
-    """
+def _has_valid_map(destination: Path) -> bool:
+    if not destination.is_file():
+        return False
+    try:
+        _validate_raster_file(destination, destination)
+        return True
+    except (OSError, RasterioError):
+        return False
+
+
+def _validate_raster_file(file_path: Path, target_map: Path) -> None:
+    if target_map == LOLA_ROUGHNESS_MAP:
+        if file_path.stat().st_size != LOLA_ROUGHNESS_FILE_SIZE:
+            raise OSError("Unexpected byte count for the LOLA roughness grid.")
+        return
+
+    with rasterio.open(file_path) as raster:
+        if raster.driver != "GTiff" or raster.count < 1:
+            raise OSError("File is not a valid GeoTIFF with a raster band.")
+
+        if target_map in GLOBAL_64PPD_MAPS:
+            if (raster.width, raster.height) != (360 * 64, 180 * 64):
+                raise OSError("Unexpected dimensions for the 64 ppd LOLA global grid.")
+        elif raster.crs is None or not raster.crs.is_projected:
+            raise OSError("Polar GeoTIFF is missing a projected CRS.")
+
+
+def _download_map(destination: Path, url: str) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    url = f"{NASA_DATA_URL}/{destination.name}"
     temporary_path = None
     show_progress = sys.stderr.isatty()
-    logger.info("Downloading %s", destination.name)
+    logger.info("Downloading %s from %s", destination.name, url)
 
     try:
         with urlopen(url, timeout=30) as response:
             if response.status != 200:
-                raise OSError(f"[raster_download.py] Expected HTTP 200, got {response.status}!")
+                raise OSError(f"[raster_download.py] Expected HTTP 200, got {response.status}")
+
             content_length = response.headers.get("Content-Length", "")
             total_bytes = int(content_length) if content_length.isdecimal() else None
             received_bytes = 0
 
             with NamedTemporaryFile(dir=destination.parent, suffix=".part", delete=False) as output:
                 temporary_path = Path(output.name)
+
                 while chunk := response.read(CHUNK_SIZE):
                     output.write(chunk)
                     received_bytes += len(chunk)
@@ -65,18 +108,21 @@ def _download_map(destination: Path) -> None:
                             percent = min(100, received_bytes * 100 // total_bytes)
                             filled = percent // 5
                             bar = "#" * filled + "-" * (20 - filled)
-                            progress = f"[{bar} {percent:3d}%]"
-                        print(f"\rDownloading {destination.name} {progress}", end="", file=sys.stderr, flush=True)
-        if total_bytes is not None and received_bytes != total_bytes:
-            raise OSError(f"[raster_download.py] Incomplete download ({received_bytes} of {total_bytes} bytes)!")
-        with rasterio.open(temporary_path) as raster:
-            if raster.driver != "GTiff" or raster.count < 1:
-                raise OSError("[raster_download.py] Downloaded file is not a GeoTIFF with a raster band!")
-            if raster.crs is None or not raster.crs.is_projected:
-                raise OSError("[raster_download.py] Downloaded GeoTIFF is missing a projected CRS!")
+                            progress = f"[{bar}] {percent:3d}%"
+                        print(
+                            f"\rDownloading {destination.name} {progress}",
+                            end="",
+                            file=sys.stderr,
+                            flush=True,
+                        )
 
-        if not destination.is_file():
-            temporary_path.replace(destination)
+        if total_bytes is not None and received_bytes != total_bytes:
+            raise OSError(
+                f"[raster_download.py] Incomplete download ({received_bytes} of {total_bytes} bytes)"
+            )
+
+        _validate_raster_file(temporary_path, destination)
+        temporary_path.replace(destination)
         logger.info("Raster ready at %s", destination)
     finally:
         if show_progress:
