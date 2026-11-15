@@ -14,6 +14,8 @@ from rasterio.crs import CRS as RasterCRS
 from rasterio.errors import RasterioError
 from rasterio.windows import Window
 
+from .evaluation import DEFAULT_FOOTPRINT_RADIUS_M
+
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 ELEVATION_MAP = DATA_DIR / "LDEM_80S_80MPP_ADJ.TIF"
 SLOPE_MAP = DATA_DIR / "LDSM_80S_80MPP_ADJ.TIF"
@@ -264,6 +266,61 @@ def get_ground_angle(lat: float, lon: float) -> float | None:
     if angle is not None and 0 <= angle <= 90:
         return angle
     return _read_global_terrain(lat, lon, slope=True)
+
+
+def get_slope_footprint_p95(
+    lat: float,
+    lon: float,
+    footprint_radius_m: float = DEFAULT_FOOTPRINT_RADIUS_M,
+) -> dict[str, float | int] | None:
+    """Sample a circular landing footprint and return its 95th-percentile slope.
+
+    The footprint uses the center, eight points at half-radius, and sixteen
+    points at the perimeter. If any required slope sample is unavailable, the
+    complete footprint is considered unavailable rather than partially safe.
+    """
+    _validate_coordinates(lat, lon)
+    if not isfinite(footprint_radius_m) or footprint_radius_m <= 0:
+        raise ValueError("[terrain.py] Footprint radius must be a positive finite number!")
+
+    coordinates = [(lon, lat)]
+    for distance_m, count in (
+        (footprint_radius_m / 2.0, 8),
+        (footprint_radius_m, 16),
+    ):
+        for index in range(count):
+            sample_lon, sample_lat, _ = GLOBAL_GEOD.fwd(
+                lon,
+                lat,
+                index * 360.0 / count,
+                distance_m,
+            )
+            coordinates.append((sample_lon, sample_lat))
+
+    slopes = []
+    for sample_lon, sample_lat in coordinates:
+        slope = get_ground_angle(sample_lat, sample_lon)
+        if slope is None:
+            return None
+        slopes.append(slope)
+
+    ordered = sorted(slopes)
+    rank = 0.95 * (len(ordered) - 1)
+    lower_index = floor(rank)
+    upper_index = min(lower_index + 1, len(ordered) - 1)
+    fraction = rank - lower_index
+    slope_p95 = (
+        ordered[lower_index]
+        + fraction * (ordered[upper_index] - ordered[lower_index])
+    )
+
+    return {
+        "slope_p95_degrees": slope_p95,
+        "footprint_radius_m": footprint_radius_m,
+        "footprint_diameter_m": footprint_radius_m * 2.0,
+        "sample_count": len(slopes),
+        "percentile": 95,
+    }
 
 
 def get_lola_roughness_deg(lat: float, lon: float) -> float | None:

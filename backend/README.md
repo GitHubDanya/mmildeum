@@ -106,11 +106,18 @@ not a guarantee of safe landing.
 
 ## API Integration
 
-The current `/api/fetch-data` endpoint does not
-provide all five required measurements.
+`GET /api/fetch-data` derives all five required measurements over a shared
+ephemeris period and returns the independent score in `score`. The complete
+result, including normalized metrics, data quality, source coverage and
+provenance, is returned in `scoring`; the measured inputs are returned in
+`scoring_metrics`.
 
-The scoring module is therefore not yet connected
-to the endpoint.
+The terrain metric is the 95th-percentile slope from 25 samples over a
+circular footprint. Its radius defaults to 250 m and can be changed with the
+`footprint_radius_m` query parameter (up to 5 km). If an ephemeris or any
+required footprint sample is unavailable, the endpoint still returns site
+data but reports an unscored `insufficient_data` result instead of assigning a
+misleading score.
 
 ## Running Tests
 

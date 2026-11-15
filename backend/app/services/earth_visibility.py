@@ -1,5 +1,12 @@
 import re
 import requests
+from .evaluation import (
+    EPHEMERIS_START,
+    EPHEMERIS_STEP,
+    EPHEMERIS_STEP_HOURS,
+    EPHEMERIS_STOP,
+    availability_metrics,
+)
 from .terrain_horizon import get_terrain_horizon, is_body_visible
 
 HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -17,6 +24,8 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict | None:
             "latitude": lat,
             "longitude": lon,
             "windows": [],
+            "earth_visibility_fraction": None,
+            "longest_earth_blackout_hours": None,
         }
 
     lines = match.group(1).strip().splitlines()
@@ -33,6 +42,7 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict | None:
     visible_windows = []
     current_start = None
     last_timestamp = None
+    visibility_samples = []
 
     for line in lines:
         parts = [p.strip() for p in line.split(",") if p.strip()]
@@ -51,6 +61,8 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict | None:
         if visible is None:
             visible = elevation > get_blocking_angle(azimuth, terrain_map)
 
+        visibility_samples.append(visible)
+
         if visible and current_start is None:
             current_start = timestamp
         elif not visible and current_start is not None:
@@ -67,10 +79,23 @@ def get_earth_visibility_window(lat: float, lon: float) -> dict | None:
             "end": last_timestamp,
         })
 
+    metrics = availability_metrics(visibility_samples)
+    if metrics is None:
+        visibility_fraction = None
+        longest_blackout_hours = None
+    else:
+        visibility_fraction, longest_blackout_hours = metrics
+
     return {
         "latitude": lat,
         "longitude": lon,
         "windows": visible_windows,
+        "earth_visibility_fraction": visibility_fraction,
+        "longest_earth_blackout_hours": longest_blackout_hours,
+        "sample_count": len(visibility_samples),
+        "time_step_hours": EPHEMERIS_STEP_HOURS,
+        "period_start": EPHEMERIS_START,
+        "period_stop": EPHEMERIS_STOP,
     }
 
 
@@ -96,14 +121,17 @@ def get_horizons_visibility_windows(lat: float, lon: float):
         "EPHEM_TYPE": "'OBSERVER'",
         "CENTER": "'coord@301'",  # 301 = The Moon
         "SITE_COORD": f"'{lon},{lat},0'",
-        "START_TIME": "'2026-10-01'",
-        "STOP_TIME": "'2026-10-31 23:59'",
-        "STEP_SIZE": "'1 h'",
+        "START_TIME": f"'{EPHEMERIS_START}'",
+        "STOP_TIME": f"'{EPHEMERIS_STOP}'",
+        "STEP_SIZE": f"'{EPHEMERIS_STEP}'",
         "QUANTITIES": "'4'",  # 4 = Apparent Azimuth & Elevation
         "CSV_FORMAT": "'YES'",
     }
 
-    response = requests.get(HORIZONS_API_URL, params=params, timeout=15)
+    try:
+        response = requests.get(HORIZONS_API_URL, params=params, timeout=15)
+    except requests.RequestException:
+        return None
     if response.status_code != 200:
         return None
 
