@@ -3,6 +3,28 @@ export interface VisibilityWindow {
     end: string;
 }
 
+export interface WindowStats {
+    fraction: number;
+    maxOutageHours: number;
+}
+
+export interface RescorePayload {
+    sunlight_windows: VisibilityWindow[];
+    visibility_windows: VisibilityWindow[];
+    normalized_metrics: {
+        slope_suitability: number;
+    };
+}
+
+export interface RescoreResult {
+    score: number;
+    metrics: {
+        sun: WindowStats;
+        earth: WindowStats;
+    };
+    normalized: [number, number, number, number, number];
+}
+
 export interface SunlightDurationResponse {
     sunlight_duration_hours?: number | null;
     average_sunlight_duration_hours?: number | null;
@@ -49,6 +71,11 @@ export interface FetchDataResponse {
     ground_angle?: number | null;
     lola_roughness_deg?: number | null;
     visibility_windows?: VisibilityWindow[] | null;
+    sunlight_windows?: VisibilityWindow[] | null;
+    normalized_metrics?: {
+        slope_suitability?: number | null;
+        [key: string]: number | null | undefined;
+    } | null;
     terrain_type?: string | null;
     terrain_class_id?: number | null;
     peak_sunlight?: number | null;
@@ -70,13 +97,17 @@ export interface SelectedSite {
     rawLon: number;
     rawAlt: number;
     score: number | null;
+    rescoreResult: RescoreResult | null;
     terrainType: string | null;
     terrainClassId: number | null;
     daytimeAvgSunAngle: number | null;
     terrainElevationM: number | null;
     groundAngle: number | null;
     lolaRoughnessDeg: number | null;
+    slopeSuitability: number;
     visibilityWindows: VisibilityWindow[];
+    sunlightWindows: VisibilityWindow[];
+    hasRealSunlightWindows: boolean;
     visibilityCoveragePct: number | null;
     visibilitySeries: number[];
     visibilityLabels: string[];

@@ -4,9 +4,12 @@ import type {
     FetchDataResponse,
     MissionSunlightMetrics,
     RecommendedDateWindow,
+    RescorePayload,
+    RescoreResult,
     SelectedSite,
     SunlightDurationResponse,
-    VisibilityWindow
+    VisibilityWindow,
+    WindowStats
 } from './types';
 
 export const HOURS_LABELS = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}h`);
@@ -63,7 +66,8 @@ export function getScoreHexColor(score: number): string {
 }
 
 export function parseLunarTimestamp(raw: string): number | null {
-    const match = raw.trim().match(/^(\d{4})-([A-Za-z]{3})-(\d{2})\s+(\d{2}):(\d{2})$/);
+    const trimmed = raw.trim();
+    const match = trimmed.match(/^(\d{4})-([A-Za-z]{3})-(\d{2})\s+(\d{2}):(\d{2})$/);
     if (match) {
         const year = Number(match[1]);
         const month = MONTH_INDEX[match[2]];
@@ -75,7 +79,12 @@ export function parseLunarTimestamp(raw: string): number | null {
         }
     }
 
-    const fallback = Date.parse(`${raw} UTC`);
+    if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+        const isoParsed = Date.parse(trimmed);
+        if (Number.isFinite(isoParsed)) return isoParsed;
+    }
+
+    const fallback = Date.parse(`${trimmed} UTC`);
     return Number.isFinite(fallback) ? fallback : null;
 }
 
@@ -117,6 +126,136 @@ export function formatWindowRange(win: VisibilityWindow): string {
         return `${formatShortUtc(startMs)} → ${formatShortUtc(endMs)}`;
     }
     return `${win.start} → ${win.end}`;
+}
+
+/**
+ * TOPSIS suitability rescoring over [newStartIso, newEndIso] using sunlight windows,
+ * Earth visibility windows, and normalized slope suitability.
+ */
+export function rescoreFromPayload(
+    payload: RescorePayload,
+    newStartIso: string,
+    newEndIso: string,
+    weights: [number, number, number, number, number] = [0.25, 0.20, 0.15, 0.10, 0.30]
+): RescoreResult {
+    const t0 = parseLunarTimestamp(newStartIso) ?? Date.parse(newStartIso);
+    const t1 = parseLunarTimestamp(newEndIso) ?? Date.parse(newEndIso);
+    const durationMs = Math.max(1, t1 - t0);
+    const durationHours = durationMs / 3600000;
+
+    function computeWindowStats(windows: VisibilityWindow[] | undefined | null): WindowStats {
+        if (!Array.isArray(windows) || windows.length === 0) {
+            return { fraction: 0, maxOutageHours: durationHours };
+        }
+
+        const rawClipped = windows
+            .map((w) => {
+                const s = parseLunarTimestamp(w.start) ?? Date.parse(w.start);
+                const e = parseLunarTimestamp(w.end) ?? Date.parse(w.end);
+                return [Math.max(t0, s), Math.min(t1, e)] as [number, number];
+            })
+            .filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e > s)
+            .sort((a, b) => a[0] - b[0]);
+
+        if (rawClipped.length === 0) {
+            return { fraction: 0, maxOutageHours: durationHours };
+        }
+
+        // Merge any overlapping intervals so activeMs never double-counts
+        const clipped: [number, number][] = [rawClipped[0]];
+        for (let i = 1; i < rawClipped.length; i++) {
+            const prev = clipped[clipped.length - 1];
+            const curr = rawClipped[i];
+            if (curr[0] <= prev[1]) {
+                prev[1] = Math.max(prev[1], curr[1]);
+            } else {
+                clipped.push(curr);
+            }
+        }
+
+        let activeMs = 0;
+        let maxGapMs = clipped[0][0] - t0; // leading outage
+
+        for (let i = 0; i < clipped.length; i++) {
+            activeMs += clipped[i][1] - clipped[i][0];
+            if (i > 0) {
+                maxGapMs = Math.max(maxGapMs, clipped[i][0] - clipped[i - 1][1]);
+            }
+        }
+        maxGapMs = Math.max(maxGapMs, t1 - clipped[clipped.length - 1][1]); // trailing outage
+
+        return {
+            fraction: activeMs / durationMs,
+            maxOutageHours: maxGapMs / 3600000
+        };
+    }
+
+    const sun = computeWindowStats(payload.sunlight_windows);
+    const earth = computeWindowStats(payload.visibility_windows);
+
+    const z: [number, number, number, number, number] = [
+        sun.fraction,
+        Math.exp(-sun.maxOutageHours / 24.0),
+        earth.fraction,
+        Math.exp(-earth.maxOutageHours / 120.0),
+        payload.normalized_metrics?.slope_suitability ?? 0.5
+    ];
+
+    let dPlusSq = 0;
+    let dMinusSq = 0;
+    for (let i = 0; i < 5; i++) {
+        dPlusSq += weights[i] * Math.pow(1 - z[i], 2);
+        dMinusSq += weights[i] * Math.pow(z[i], 2);
+    }
+
+    const dPlus = Math.sqrt(dPlusSq);
+    const dMinus = Math.sqrt(dMinusSq);
+    const score = dPlus + dMinus === 0 ? 0 : (100 * dMinus) / (dPlus + dMinus);
+
+    return { score, metrics: { sun, earth }, normalized: z };
+}
+
+/**
+ * Generates approximate sunlight windows over [startMs, endMs] if the API payload
+ * omits `sunlight_windows`.
+ */
+function buildFallbackSunlightWindows(
+    lat: number,
+    lon: number,
+    startMs: number,
+    endMs: number
+): VisibilityWindow[] {
+    const windows: VisibilityWindow[] = [];
+    const stepMs = 3600 * 1000;
+    const latRad = deg2rad(lat);
+    let runStart: number | null = null;
+
+    for (let t = startMs; t <= endMs; t += stepMs) {
+        const rawPhase = ((t - J2000_NEW_MOON_MS) % SYNODIC_MONTH_MS) / SYNODIC_MONTH_MS;
+        const phase = rawPhase < 0 ? rawPhase + 1 : rawPhase;
+        const subsolarLon = normalizeDeg180((0.5 - phase) * 360);
+        const hourAngleRad = deg2rad(lon - subsolarLon);
+        const cosZ = Math.cos(latRad) * Math.cos(hourAngleRad);
+
+        if (cosZ > 0.02) {
+            if (runStart === null) runStart = t;
+        } else if (runStart !== null) {
+            windows.push({
+                start: new Date(runStart).toISOString(),
+                end: new Date(t).toISOString()
+            });
+            runStart = null;
+        }
+    }
+
+    if (runStart !== null) {
+        windows.push({
+            start: new Date(runStart).toISOString(),
+            end: new Date(endMs).toISOString()
+        });
+    }
+
+    return windows;
 }
 
 export function computeEarthPositionFromMoon(timestampMs: number): EarthEphemeris {
@@ -169,6 +308,14 @@ export function getTimelineBounds(sites: SelectedSite[]): { startMs: number; end
             if (s !== null) allTimestamps.push(s);
             if (e !== null) allTimestamps.push(e);
         }
+        if (site.hasRealSunlightWindows) {
+            for (const win of site.sunlightWindows) {
+                const s = parseLunarTimestamp(win.start);
+                const e = parseLunarTimestamp(win.end);
+                if (s !== null) allTimestamps.push(s);
+                if (e !== null) allTimestamps.push(e);
+            }
+        }
     }
 
     if (allTimestamps.length === 0) {
@@ -188,7 +335,7 @@ export function getTimelineBounds(sites: SelectedSite[]): { startMs: number; end
 }
 
 export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number): DateEvaluation {
-    const parsedWindows = site.visibilityWindows
+    const parsedVisWindows = site.visibilityWindows
         .map((w) => ({
             startMs: parseLunarTimestamp(w.start),
             endMs: parseLunarTimestamp(w.end)
@@ -197,7 +344,7 @@ export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number)
 
     const hasVisibilityData = site.hasRealVisibility;
     const isEarthVisible = hasVisibilityData
-        ? parsedWindows.some((w) => timestampMs >= w.startMs && timestampMs <= w.endMs)
+        ? parsedVisWindows.some((w) => timestampMs >= w.startMs && timestampMs <= w.endMs)
         : Math.cos((site.rawLon * Math.PI) / 180) > -0.15;
 
     const rawPhase = ((timestampMs - J2000_NEW_MOON_MS) % SYNODIC_MONTH_MS) / SYNODIC_MONTH_MS;
@@ -218,7 +365,23 @@ export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number)
             : geometricMaxDeg;
 
     const sunAngleDeg = cosZ > 0 ? Number((cosZ * peakAngleDeg).toFixed(1)) : 0;
-    const isDaylight = sunAngleDeg > 1.0;
+
+    const parsedSunWindows = site.hasRealSunlightWindows
+        ? site.sunlightWindows
+            .map((w) => ({
+                startMs: parseLunarTimestamp(w.start),
+                endMs: parseLunarTimestamp(w.end)
+            }))
+            .filter(
+                (w): w is { startMs: number; endMs: number } =>
+                    w.startMs !== null && w.endMs !== null
+            )
+        : [];
+
+    const isDaylight =
+        parsedSunWindows.length > 0
+            ? parsedSunWindows.some((w) => timestampMs >= w.startMs && timestampMs <= w.endMs)
+            : sunAngleDeg > 1.0;
 
     let suitabilityScore = 0;
     if (isEarthVisible) suitabilityScore += 50;
@@ -246,7 +409,7 @@ export function evaluateSiteAtTimestamp(site: SelectedSite, timestampMs: number)
 
 /**
  * Finds contiguous recommended landing start dates across [startMs, endMs],
- * scoring each candidate touchdown date across the full mission duration.
+ * scoring each candidate touchdown date across the full mission duration using TOPSIS.
  */
 export function findRecommendedLandingWindows(
     targetSites: SelectedSite[],
@@ -261,27 +424,42 @@ export function findRecommendedLandingWindows(
     const samples: { t: number; score: number; allOptimal: boolean }[] = [];
 
     for (let t = startMs; t <= endMs; t += stepMs) {
-        // Sample start, midpoint, and end of the mission interval [t, t + durationMs]
-        const missionEnd = t + durationMs;
-        const checkpoints =
-            durationMs <= stepMs
-                ? [t]
-                : [t, t + durationMs * 0.33, t + durationMs * 0.67, missionEnd];
+        const startIso = new Date(t).toISOString();
+        const endIso = new Date(t + durationMs).toISOString();
 
-        let totalScore = 0;
-        let allCheckpointsOptimal = true;
+        let scoreSum = 0;
+        let allSitesStrong = true;
 
-        for (const cp of checkpoints) {
-            const evals = targetSites.map((s) => evaluateSiteAtTimestamp(s, cp));
-            const cpAvg = evals.reduce((acc, e) => acc + e.suitabilityScore, 0) / evals.length;
-            totalScore += cpAvg;
-            if (!evals.every((e) => e.status === 'Optimal')) {
-                allCheckpointsOptimal = false;
+        for (const site of targetSites) {
+            if (site.hasRealVisibility || site.hasRealSunlightWindows) {
+                const res = rescoreFromPayload(
+                    {
+                        sunlight_windows: site.sunlightWindows,
+                        visibility_windows: site.visibilityWindows,
+                        normalized_metrics: {
+                            slope_suitability: site.slopeSuitability
+                        }
+                    },
+                    startIso,
+                    endIso
+                );
+                scoreSum += res.score;
+                if (res.score < 60) {
+                    allSitesStrong = false;
+                }
+            } else {
+                const evalStart = evaluateSiteAtTimestamp(site, t);
+                const evalMid = evaluateSiteAtTimestamp(site, t + durationMs * 0.5);
+                const avg = (evalStart.suitabilityScore + evalMid.suitabilityScore) / 2;
+                scoreSum += avg;
+                if (evalStart.status !== 'Optimal' || evalMid.status !== 'Optimal') {
+                    allSitesStrong = false;
+                }
             }
         }
 
-        const avgScore = totalScore / checkpoints.length;
-        samples.push({ t, score: avgScore, allOptimal: allCheckpointsOptimal });
+        const avgScore = scoreSum / targetSites.length;
+        samples.push({ t, score: avgScore, allOptimal: allSitesStrong });
     }
 
     const collectSegments = (predicate: (s: (typeof samples)[number]) => boolean) => {
@@ -342,7 +520,7 @@ export function findRecommendedLandingWindows(
 
     let windows = collectSegments((s) => s.allOptimal);
     if (windows.length === 0) {
-        windows = collectSegments((s) => s.score >= 55);
+        windows = collectSegments((s) => s.score >= 50);
     }
 
     return windows
@@ -461,12 +639,30 @@ export async function fetchSiteTelemetry(
             coveragePct: null
         };
 
+    const hasRealSunlightWindows = Array.isArray(data.sunlight_windows);
+    const sunlightWindows = hasRealSunlightWindows
+        ? data.sunlight_windows!
+        : buildFallbackSunlightWindows(
+            lat,
+            lon,
+            Date.UTC(2026, 8, 1, 0, 0),
+            Date.UTC(2026, 11, 31, 23, 0)
+        );
+
     const groundAngle =
         typeof data.ground_angle_deg === 'number' && Number.isFinite(data.ground_angle_deg)
             ? data.ground_angle_deg
             : typeof data.ground_angle === 'number' && Number.isFinite(data.ground_angle)
                 ? data.ground_angle
                 : null;
+
+    const slopeSuitability =
+        typeof data.normalized_metrics?.slope_suitability === 'number' &&
+        Number.isFinite(data.normalized_metrics.slope_suitability)
+            ? Math.max(0, Math.min(1, data.normalized_metrics.slope_suitability))
+            : groundAngle !== null
+                ? Math.max(0, Math.min(1, 1 - groundAngle / 25))
+                : 0.5;
 
     const lolaRoughnessDeg =
         typeof data.lola_roughness_deg === 'number' && Number.isFinite(data.lola_roughness_deg)
@@ -493,7 +689,10 @@ export async function fetchSiteTelemetry(
             typeof data.terrain_elevation_m === 'number' ? data.terrain_elevation_m : null,
         groundAngle,
         lolaRoughnessDeg,
+        slopeSuitability,
         visibilityWindows,
+        sunlightWindows,
+        hasRealSunlightWindows,
         visibilityCoveragePct: builtVisibility.coveragePct,
         visibilitySeries: builtVisibility.series,
         visibilityLabels: builtVisibility.labels,

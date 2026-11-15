@@ -8,7 +8,8 @@
         fetchSiteTelemetry,
         fetchSunlightDuration,
         findRecommendedLandingWindows,
-        getTimelineBounds
+        getTimelineBounds,
+        rescoreFromPayload
     } from '#lib/lunar/telemetry';
     import LunarGlobe from '#lib/lunar/LunarGlobe.svelte';
     import SitesListView from '#lib/lunar/SitesListView.svelte';
@@ -53,6 +54,12 @@
         selectedTimeMs = timelineBounds.startMs;
     }
 
+    // Automatically rescore all loaded landing sites whenever landing date or mission duration changes
+    $: rescoreTriggerKey = `${selectedTimeMs}|${missionDurationHours}`;
+    $: if (rescoreTriggerKey && selectedSites.length > 0) {
+        rescoreAllSites(selectedTimeMs, missionDurationHours);
+    }
+
     $: readyTargetSites = timelineTargetSites.filter((s) => !s.loadingScore && !s.scoreError);
     $: readySiteIdsKey = readyTargetSites.map((s) => s.id).join(',');
     $: sunlightQueryKey = `${selectedTimeMs}|${missionDurationHours}|${readySiteIdsKey}`;
@@ -73,6 +80,51 @@
         ? Math.min(viewportWidth * 0.65, 1040)
         : viewportWidth * 0.4;
     $: rightInsetPx = Math.max(0, menuWidthPx - viewportWidth * 0.08);
+
+    function applyRescoreToSite(
+        site: SelectedSite,
+        startMs: number,
+        durationHours: number
+    ): SelectedSite {
+        if (site.loadingScore || site.scoreError) return site;
+
+        const startIso = new Date(startMs).toISOString();
+        const endIso = new Date(startMs + Math.max(1, durationHours) * 3600 * 1000).toISOString();
+
+        const result = rescoreFromPayload(
+            {
+                sunlight_windows: site.sunlightWindows,
+                visibility_windows: site.visibilityWindows,
+                normalized_metrics: {
+                    slope_suitability: site.slopeSuitability
+                }
+            },
+            startIso,
+            endIso
+        );
+
+        return {
+            ...site,
+            score: Number(result.score.toFixed(1)),
+            rescoreResult: result
+        };
+    }
+
+    function rescoreAllSites(startMs: number, durationHours: number) {
+        let didChange = false;
+        const nextSites = selectedSites.map((site) => {
+            if (site.loadingScore || site.scoreError) return site;
+            const rescored = applyRescoreToSite(site, startMs, durationHours);
+            if (rescored.score !== site.score) {
+                didChange = true;
+            }
+            return rescored;
+        });
+
+        if (didChange) {
+            selectedSites = nextSites;
+        }
+    }
 
     function buildSunlightCacheKey(
         site: SelectedSite,
@@ -188,11 +240,16 @@
 
         try {
             const updates = await fetchSiteTelemetry(site.rawLat, site.rawLon);
-            selectedSites = selectedSites.map((s) =>
-                s.id === site.id
-                    ? { ...s, ...updates, loadingScore: false, scoreError: false }
-                    : s
-            );
+            selectedSites = selectedSites.map((s) => {
+                if (s.id !== site.id) return s;
+                const merged: SelectedSite = {
+                    ...s,
+                    ...updates,
+                    loadingScore: false,
+                    scoreError: false
+                };
+                return applyRescoreToSite(merged, selectedTimeMs, missionDurationHours);
+            });
 
             if (!hasUserScrubbedTime) {
                 const updatedSite = selectedSites.find((s) => s.id === site.id);
@@ -231,13 +288,17 @@
             rawLon: lon,
             rawAlt: alt,
             score: null,
+            rescoreResult: null,
             terrainType: null,
             terrainClassId: null,
             daytimeAvgSunAngle: null,
             terrainElevationM: null,
             groundAngle: null,
             lolaRoughnessDeg: null,
+            slopeSuitability: 0.5,
             visibilityWindows: [],
+            sunlightWindows: [],
+            hasRealSunlightWindows: false,
             visibilityCoveragePct: null,
             visibilitySeries: fallback.earthVisibility24h,
             visibilityLabels: HOURS_LABELS,
