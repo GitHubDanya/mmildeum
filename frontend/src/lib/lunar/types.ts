@@ -11,9 +11,14 @@ export interface WindowStats {
 export interface RescorePayload {
     sunlight_windows: VisibilityWindow[];
     visibility_windows: VisibilityWindow[];
-    normalized_metrics: {
-        slope_suitability: number;
-    };
+    normalized_metrics?: {
+        slope_suitability?: number | null;
+    } | null;
+    scoring?: {
+        normalized_metrics?: {
+            slope_suitability?: number | null;
+        } | null;
+    } | null;
 }
 
 export interface RescoreResult {
@@ -25,32 +30,39 @@ export interface RescoreResult {
     normalized: [number, number, number, number, number];
 }
 
-export interface SunlightDurationResponse {
-    sunlight_duration_hours?: number | null;
-    average_sunlight_duration_hours?: number | null;
-    avg_sunlight_duration_hours?: number | null;
-    total_sunlight_hours?: number | null;
-    sunlight_hours?: number | null;
-    duration_hours?: number | null;
-    sunlight_duration_minutes?: number | null;
-    sunlight_minutes?: number | null;
-    duration_minutes?: number | null;
-    sunlight_duration_seconds?: number | null;
-    sunlight_seconds?: number | null;
-    total_duration_hours?: number | null;
-    interval_hours?: number | null;
-    total_hours?: number | null;
-    sunlight_percentage?: number | null;
-    sunlit_percentage?: number | null;
-    sunlight_percent?: number | null;
-    sunlight_fraction?: number | null;
-    sunlit_fraction?: number | null;
-    sunlight_ratio?: number | null;
-    step_minutes?: number | null;
-    total_samples?: number | null;
-    sample_count?: number | null;
-    sunlit_samples?: number | null;
-    sunlight_samples?: number | null;
+export interface ScoringMetrics {
+    sunlight_fraction: number;
+    longest_darkness_hours: number;
+    earth_visibility_fraction: number;
+    longest_earth_blackout_hours: number;
+    slope_p95_degrees: number | null;
+}
+
+export interface ScoringBlock {
+    score: number;
+    feasible: boolean | null;
+    failed_constraints: string[];
+    normalized_metrics: {
+        sunlight: number;
+        darkness_endurance: number;
+        earth_visibility: number;
+        communication_endurance: number;
+        slope_suitability: number;
+    };
+    model_version?: string;
+    data_quality?: string;
+    missing_metrics?: string[];
+    unavailable_sources?: string[];
+    metadata?: {
+        period_start?: string;
+        period_stop?: string;
+        time_step_minutes?: number;
+        sample_count?: number;
+        footprint_radius_m?: number;
+        slope_sample_count?: number;
+        horizon_data_quality?: string;
+        data_sources?: string[];
+    };
 }
 
 export interface MissionSunlightMetrics {
@@ -62,20 +74,23 @@ export interface MissionSunlightMetrics {
     stepMinutes: number;
     sampleCount: number | null;
     sunlitSampleCount: number | null;
+    isFallback?: boolean;
 }
 
 export interface FetchDataResponse {
-    daytime_avg_sun_angle: number | null;
-    terrain_elevation_m: number | null;
+    mission_start?: string | null;
+    mission_end?: string | null;
+    step_minutes?: number | null;
+    sunlight_windows?: VisibilityWindow[] | null;
+    visibility_windows?: VisibilityWindow[] | null;
+    terrain_elevation_m?: number | null;
     ground_angle_deg?: number | null;
     ground_angle?: number | null;
     lola_roughness_deg?: number | null;
-    visibility_windows?: VisibilityWindow[] | null;
-    sunlight_windows?: VisibilityWindow[] | null;
-    normalized_metrics?: {
-        slope_suitability?: number | null;
-        [key: string]: number | null | undefined;
-    } | null;
+    score?: number | null;
+    scoring_metrics?: Partial<ScoringMetrics> | null;
+    scoring?: Partial<ScoringBlock> | null;
+    daytime_avg_sun_angle?: number | null;
     terrain_type?: string | null;
     terrain_class_id?: number | null;
     peak_sunlight?: number | null;
@@ -84,7 +99,6 @@ export interface FetchDataResponse {
     sunlight_24h?: number[] | null;
     earth_visibility_24h?: number[] | null;
     sunlight_angle_24h?: number[] | null;
-    score?: number | null;
 }
 
 export interface SelectedSite {
@@ -98,6 +112,8 @@ export interface SelectedSite {
     rawAlt: number;
     score: number | null;
     rescoreResult: RescoreResult | null;
+    scoringMetrics: ScoringMetrics | null;
+    scoringBlock: ScoringBlock | null;
     terrainType: string | null;
     terrainClassId: number | null;
     daytimeAvgSunAngle: number | null;
@@ -118,6 +134,7 @@ export interface SelectedSite {
     sunlightAngle24h: number[];
     isEstimatedSunSeries: boolean;
     loadingScore: boolean;
+    updatingTelemetry: boolean;
     scoreError: boolean;
     missionSunlight: MissionSunlightMetrics | null;
     loadingMissionSunlight: boolean;

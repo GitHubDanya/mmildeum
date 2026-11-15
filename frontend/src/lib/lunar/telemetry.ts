@@ -6,8 +6,9 @@ import type {
     RecommendedDateWindow,
     RescorePayload,
     RescoreResult,
+    ScoringBlock,
+    ScoringMetrics,
     SelectedSite,
-    SunlightDurationResponse,
     VisibilityWindow,
     WindowStats
 } from './types';
@@ -44,11 +45,8 @@ function normalizeDeg180(deg: number): number {
     return (((deg + 180) % 360) + 360) % 360 - 180;
 }
 
-function firstFiniteNumber(...values: Array<number | null | undefined>): number | null {
-    for (const v of values) {
-        if (typeof v === 'number' && Number.isFinite(v)) return v;
-    }
-    return null;
+function isFiniteNum(val: unknown): val is number {
+    return typeof val === 'number' && Number.isFinite(val);
 }
 
 export function getScoreClass(score: number): string {
@@ -129,8 +127,7 @@ export function formatWindowRange(win: VisibilityWindow): string {
 }
 
 /**
- * TOPSIS suitability rescoring over [newStartIso, newEndIso] using sunlight windows,
- * Earth visibility windows, and normalized slope suitability.
+ * Client-side TOPSIS rescoring fallback over [newStartIso, newEndIso].
  */
 export function rescoreFromPayload(
     payload: RescorePayload,
@@ -148,30 +145,15 @@ export function rescoreFromPayload(
             return { fraction: 0, maxOutageHours: durationHours };
         }
 
-        const rawClipped = windows
-            .map((w) => {
-                const s = parseLunarTimestamp(w.start) ?? Date.parse(w.start);
-                const e = parseLunarTimestamp(w.end) ?? Date.parse(w.end);
-                return [Math.max(t0, s), Math.min(t1, e)] as [number, number];
-            })
+        const clipped = windows
+            .map((w) => [
+                Math.max(t0, parseLunarTimestamp(w.start) ?? Date.parse(w.start)),
+                Math.min(t1, parseLunarTimestamp(w.end) ?? Date.parse(w.end))
+            ] as [number, number])
             .filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e > s)
             .sort((a, b) => a[0] - b[0]);
 
-        if (rawClipped.length === 0) {
-            return { fraction: 0, maxOutageHours: durationHours };
-        }
-
-        // Merge any overlapping intervals so activeMs never double-counts
-        const clipped: [number, number][] = [rawClipped[0]];
-        for (let i = 1; i < rawClipped.length; i++) {
-            const prev = clipped[clipped.length - 1];
-            const curr = rawClipped[i];
-            if (curr[0] <= prev[1]) {
-                prev[1] = Math.max(prev[1], curr[1]);
-            } else {
-                clipped.push(curr);
-            }
-        }
+        if (clipped.length === 0) return { fraction: 0, maxOutageHours: durationHours };
 
         let activeMs = 0;
         let maxGapMs = clipped[0][0] - t0; // leading outage
@@ -193,12 +175,17 @@ export function rescoreFromPayload(
     const sun = computeWindowStats(payload.sunlight_windows);
     const earth = computeWindowStats(payload.visibility_windows);
 
+    const rawSlopeSuitability =
+        payload.normalized_metrics?.slope_suitability ??
+        payload.scoring?.normalized_metrics?.slope_suitability;
+    const slopeSuitability = isFiniteNum(rawSlopeSuitability) ? rawSlopeSuitability : 0;
+
     const z: [number, number, number, number, number] = [
         sun.fraction,
         Math.exp(-sun.maxOutageHours / 24.0),
         earth.fraction,
         Math.exp(-earth.maxOutageHours / 120.0),
-        payload.normalized_metrics?.slope_suitability ?? 0.5
+        slopeSuitability
     ];
 
     let dPlusSq = 0;
@@ -216,46 +203,79 @@ export function rescoreFromPayload(
 }
 
 /**
- * Generates approximate sunlight windows over [startMs, endMs] if the API payload
- * omits `sunlight_windows`.
+ * Applies immediate client-side rescoring fallback to a site for a new [startMs, durationHours] interval
+ * while fresh `/fetch-data` telemetry is in flight or if the API is unreachable.
  */
-function buildFallbackSunlightWindows(
-    lat: number,
-    lon: number,
+export function applyFallbackRescore(
+    site: SelectedSite,
     startMs: number,
-    endMs: number
-): VisibilityWindow[] {
-    const windows: VisibilityWindow[] = [];
-    const stepMs = 3600 * 1000;
-    const latRad = deg2rad(lat);
-    let runStart: number | null = null;
+    durationHours: number
+): SelectedSite {
+    const safeHours = Math.max(1, durationHours);
+    const endMs = startMs + safeHours * 3600 * 1000;
+    const startIso = new Date(startMs).toISOString();
+    const endIso = new Date(endMs).toISOString();
 
-    for (let t = startMs; t <= endMs; t += stepMs) {
-        const rawPhase = ((t - J2000_NEW_MOON_MS) % SYNODIC_MONTH_MS) / SYNODIC_MONTH_MS;
-        const phase = rawPhase < 0 ? rawPhase + 1 : rawPhase;
-        const subsolarLon = normalizeDeg180((0.5 - phase) * 360);
-        const hourAngleRad = deg2rad(lon - subsolarLon);
-        const cosZ = Math.cos(latRad) * Math.cos(hourAngleRad);
+    const rescored = rescoreFromPayload(
+        {
+            sunlight_windows: site.sunlightWindows,
+            visibility_windows: site.visibilityWindows,
+            normalized_metrics: {
+                slope_suitability: site.slopeSuitability
+            }
+        },
+        startIso,
+        endIso
+    );
 
-        if (cosZ > 0.02) {
-            if (runStart === null) runStart = t;
-        } else if (runStart !== null) {
-            windows.push({
-                start: new Date(runStart).toISOString(),
-                end: new Date(t).toISOString()
-            });
-            runStart = null;
+    const sunlitHours = Number((rescored.metrics.sun.fraction * safeHours).toFixed(2));
+    const sunlitPercentage = Number((rescored.metrics.sun.fraction * 100).toFixed(1));
+
+    const updatedScoringMetrics: ScoringMetrics = {
+        sunlight_fraction: rescored.metrics.sun.fraction,
+        longest_darkness_hours: Number(rescored.metrics.sun.maxOutageHours.toFixed(2)),
+        earth_visibility_fraction: rescored.metrics.earth.fraction,
+        longest_earth_blackout_hours: Number(rescored.metrics.earth.maxOutageHours.toFixed(2)),
+        slope_p95_degrees: site.scoringMetrics?.slope_p95_degrees ?? null
+    };
+
+    const updatedScoringBlock: ScoringBlock = {
+        score: rescored.score,
+        feasible: site.scoringBlock?.feasible ?? null,
+        failed_constraints: site.scoringBlock?.failed_constraints ?? [],
+        normalized_metrics: {
+            sunlight: rescored.normalized[0],
+            darkness_endurance: rescored.normalized[1],
+            earth_visibility: rescored.normalized[2],
+            communication_endurance: rescored.normalized[3],
+            slope_suitability: rescored.normalized[4]
+        },
+        model_version: site.scoringBlock?.model_version,
+        data_quality: site.scoringBlock?.data_quality,
+        missing_metrics: site.scoringBlock?.missing_metrics,
+        unavailable_sources: site.scoringBlock?.unavailable_sources,
+        metadata: site.scoringBlock?.metadata
+    };
+
+    return {
+        ...site,
+        score: Number(rescored.score.toFixed(1)),
+        rescoreResult: rescored,
+        scoringMetrics: updatedScoringMetrics,
+        scoringBlock: updatedScoringBlock,
+        visibilityCoveragePct: Number((rescored.metrics.earth.fraction * 100).toFixed(1)),
+        missionSunlight: {
+            startIso,
+            endIso,
+            missionHours: safeHours,
+            sunlitHours,
+            sunlitPercentage,
+            stepMinutes: site.missionSunlight?.stepMinutes ?? 60,
+            sampleCount: safeHours,
+            sunlitSampleCount: Math.round(sunlitHours),
+            isFallback: true
         }
-    }
-
-    if (runStart !== null) {
-        windows.push({
-            start: new Date(runStart).toISOString(),
-            end: new Date(endMs).toISOString()
-        });
-    }
-
-    return windows;
+    };
 }
 
 export function computeEarthPositionFromMoon(timestampMs: number): EarthEphemeris {
@@ -528,7 +548,10 @@ export function findRecommendedLandingWindows(
         .slice(0, 3);
 }
 
-export function buildVisibilityFromWindows(windows: VisibilityWindow[]) {
+export function buildVisibilityFromWindows(
+    windows: VisibilityWindow[],
+    overrideFraction?: number | null
+) {
     const parsed = windows
         .map((w) => ({
             startMs: parseLunarTimestamp(w.start),
@@ -540,7 +563,9 @@ export function buildVisibilityFromWindows(windows: VisibilityWindow[]) {
         return {
             series: Array(24).fill(0),
             labels: HOURS_LABELS,
-            coveragePct: 0
+            coveragePct: isFiniteNum(overrideFraction)
+                ? Number((overrideFraction * 100).toFixed(1))
+                : 0
         };
     }
 
@@ -570,7 +595,10 @@ export function buildVisibilityFromWindows(windows: VisibilityWindow[]) {
         return acc + Math.max(0, clampedEnd - clampedStart);
     }, 0);
 
-    const coveragePct = Number(Math.min(100, (totalVisibleMs / totalSpanMs) * 100).toFixed(1));
+    const computedPct = Number(Math.min(100, (totalVisibleMs / totalSpanMs) * 100).toFixed(1));
+    const coveragePct = isFiniteNum(overrideFraction)
+        ? Number((overrideFraction * 100).toFixed(1))
+        : computedPct;
 
     return { series, labels, coveragePct };
 }
@@ -599,25 +627,61 @@ export function buildFallbackSeries(lat: number, lon: number, avgSunAngle: numbe
     return { sunlight24h, earthVisibility24h, sunlightAngle24h };
 }
 
+/**
+ * Fetches site telemetry for the requested mission time window [startMs, endMs].
+ */
 export async function fetchSiteTelemetry(
     lat: number,
-    lon: number
+    lon: number,
+    startMs?: number,
+    endMs?: number,
+    stepMinutes = 60,
+    signal?: AbortSignal
 ): Promise<Partial<SelectedSite>> {
+    const resolvedStartMs = startMs ?? Date.UTC(2026, 9, 1, 0, 0);
+    const resolvedEndMs = Math.max(
+        endMs ?? resolvedStartMs + 72 * 3600 * 1000,
+        resolvedStartMs + 3600 * 1000
+    );
+    const startIso = new Date(resolvedStartMs).toISOString();
+    const endIso = new Date(resolvedEndMs).toISOString();
+    const clampedStep = Math.max(1, Math.min(1440, Math.round(stepMinutes)));
+
     const params = new URLSearchParams({
         lat: lat.toString(),
-        long: lon.toString()
+        long: lon.toString(),
+        mission_start: startIso,
+        mission_end: endIso,
+        start: startIso,
+        end: endIso,
+        step_minutes: clampedStep.toString()
     });
 
-    const response = await fetch(`${API_BASE_URL}/fetch-data?${params.toString()}`);
+    const response = await fetch(`${API_BASE_URL}/fetch-data?${params.toString()}`, {
+        signal
+    });
     if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        let detail = `HTTP ${response.status}`;
+        try {
+            const errBody = await response.json();
+            if (typeof errBody?.detail === 'string') {
+                detail = errBody.detail;
+            }
+        } catch {
+            // Ignore non-JSON error payload
+        }
+        throw new Error(detail);
     }
 
     const data: FetchDataResponse = await response.json();
-    const validScore =
-        typeof data.score === 'number' && Number.isFinite(data.score) ? data.score : null;
 
-    const fallback = buildFallbackSeries(lat, lon, data.daytime_avg_sun_angle);
+    const rawScore = isFiniteNum(data.score)
+        ? data.score
+        : isFiniteNum(data.scoring?.score)
+            ? data.scoring!.score!
+            : null;
+
+    const fallback = buildFallbackSeries(lat, lon, data.daytime_avg_sun_angle ?? null);
     const hasRealSunSeries =
         Array.isArray(data.sunlight_24h) &&
         data.sunlight_24h.length === 24 &&
@@ -631,62 +695,146 @@ export async function fetchSiteTelemetry(
 
     const hasRealVisibility = Array.isArray(data.visibility_windows);
     const visibilityWindows = hasRealVisibility ? data.visibility_windows! : [];
+
+    const hasRealSunlightWindows = Array.isArray(data.sunlight_windows);
+    const sunlightWindows = hasRealSunlightWindows ? data.sunlight_windows! : [];
+
+    const groundAngle = isFiniteNum(data.ground_angle_deg)
+        ? data.ground_angle_deg
+        : isFiniteNum(data.ground_angle)
+            ? data.ground_angle
+            : null;
+
+    const slopeSuitability = isFiniteNum(data.scoring?.normalized_metrics?.slope_suitability)
+        ? Math.max(0, Math.min(1, data.scoring!.normalized_metrics!.slope_suitability!))
+        : groundAngle !== null
+            ? Math.max(0, Math.min(1, 1 - groundAngle / 25))
+            : 0.5;
+
+    const lolaRoughnessDeg = isFiniteNum(data.lola_roughness_deg) ? data.lola_roughness_deg : null;
+
+    const parsedStartMs = data.mission_start
+        ? (parseLunarTimestamp(data.mission_start) ?? resolvedStartMs)
+        : resolvedStartMs;
+    const parsedEndMs = data.mission_end
+        ? (parseLunarTimestamp(data.mission_end) ?? resolvedEndMs)
+        : resolvedEndMs;
+    const missionHours = Math.max(1, (parsedEndMs - parsedStartMs) / 3600000);
+    const resolvedStep = isFiniteNum(data.step_minutes) ? data.step_minutes : clampedStep;
+
+    // Fallback rescore computation for any missing metrics
+    const fallbackRescore = rescoreFromPayload(
+        {
+            sunlight_windows: sunlightWindows,
+            visibility_windows: visibilityWindows,
+            normalized_metrics: { slope_suitability: slopeSuitability }
+        },
+        new Date(parsedStartMs).toISOString(),
+        new Date(parsedEndMs).toISOString()
+    );
+
+    const sunlightFraction = isFiniteNum(data.scoring_metrics?.sunlight_fraction)
+        ? data.scoring_metrics!.sunlight_fraction!
+        : fallbackRescore.metrics.sun.fraction;
+
+    const earthVisibilityFraction = isFiniteNum(data.scoring_metrics?.earth_visibility_fraction)
+        ? data.scoring_metrics!.earth_visibility_fraction!
+        : fallbackRescore.metrics.earth.fraction;
+
+    const scoringMetrics: ScoringMetrics = {
+        sunlight_fraction: sunlightFraction,
+        longest_darkness_hours: isFiniteNum(data.scoring_metrics?.longest_darkness_hours)
+            ? data.scoring_metrics!.longest_darkness_hours!
+            : fallbackRescore.metrics.sun.maxOutageHours,
+        earth_visibility_fraction: earthVisibilityFraction,
+        longest_earth_blackout_hours: isFiniteNum(data.scoring_metrics?.longest_earth_blackout_hours)
+            ? data.scoring_metrics!.longest_earth_blackout_hours!
+            : fallbackRescore.metrics.earth.maxOutageHours,
+        slope_p95_degrees: isFiniteNum(data.scoring_metrics?.slope_p95_degrees)
+            ? data.scoring_metrics!.slope_p95_degrees!
+            : null
+    };
+
+    const scoringBlock: ScoringBlock = {
+        score: rawScore ?? fallbackRescore.score,
+        feasible: data.scoring?.feasible ?? null,
+        failed_constraints: data.scoring?.failed_constraints ?? [],
+        normalized_metrics: {
+            sunlight: isFiniteNum(data.scoring?.normalized_metrics?.sunlight)
+                ? data.scoring!.normalized_metrics!.sunlight!
+                : fallbackRescore.normalized[0],
+            darkness_endurance: isFiniteNum(data.scoring?.normalized_metrics?.darkness_endurance)
+                ? data.scoring!.normalized_metrics!.darkness_endurance!
+                : fallbackRescore.normalized[1],
+            earth_visibility: isFiniteNum(data.scoring?.normalized_metrics?.earth_visibility)
+                ? data.scoring!.normalized_metrics!.earth_visibility!
+                : fallbackRescore.normalized[2],
+            communication_endurance: isFiniteNum(
+                data.scoring?.normalized_metrics?.communication_endurance
+            )
+                ? data.scoring!.normalized_metrics!.communication_endurance!
+                : fallbackRescore.normalized[3],
+            slope_suitability: slopeSuitability
+        },
+        model_version: data.scoring?.model_version,
+        data_quality: data.scoring?.data_quality,
+        missing_metrics: data.scoring?.missing_metrics,
+        unavailable_sources: data.scoring?.unavailable_sources,
+        metadata: data.scoring?.metadata
+    };
+
     const builtVisibility = hasRealVisibility
-        ? buildVisibilityFromWindows(visibilityWindows)
+        ? buildVisibilityFromWindows(visibilityWindows, earthVisibilityFraction)
         : {
             series: fallback.earthVisibility24h,
             labels: HOURS_LABELS,
-            coveragePct: null
+            coveragePct: Number((earthVisibilityFraction * 100).toFixed(1))
         };
 
-    const hasRealSunlightWindows = Array.isArray(data.sunlight_windows);
-    const sunlightWindows = hasRealSunlightWindows
-        ? data.sunlight_windows!
-        : buildFallbackSunlightWindows(
-            lat,
-            lon,
-            Date.UTC(2026, 8, 1, 0, 0),
-            Date.UTC(2026, 11, 31, 23, 0)
-        );
+    const sunlitHours = Number((sunlightFraction * missionHours).toFixed(2));
+    const sunlitPercentage = Number((sunlightFraction * 100).toFixed(1));
+    const sampleCount = isFiniteNum(data.scoring?.metadata?.sample_count)
+        ? data.scoring!.metadata!.sample_count!
+        : null;
 
-    const groundAngle =
-        typeof data.ground_angle_deg === 'number' && Number.isFinite(data.ground_angle_deg)
-            ? data.ground_angle_deg
-            : typeof data.ground_angle === 'number' && Number.isFinite(data.ground_angle)
-                ? data.ground_angle
-                : null;
+    const missionSunlight: MissionSunlightMetrics = {
+        startIso: new Date(parsedStartMs).toISOString(),
+        endIso: new Date(parsedEndMs).toISOString(),
+        missionHours: Number(missionHours.toFixed(2)),
+        sunlitHours,
+        sunlitPercentage,
+        stepMinutes: resolvedStep,
+        sampleCount,
+        sunlitSampleCount:
+            sampleCount !== null ? Math.round(sunlightFraction * sampleCount) : null,
+        isFallback: false
+    };
 
-    const slopeSuitability =
-        typeof data.normalized_metrics?.slope_suitability === 'number' &&
-        Number.isFinite(data.normalized_metrics.slope_suitability)
-            ? Math.max(0, Math.min(1, data.normalized_metrics.slope_suitability))
-            : groundAngle !== null
-                ? Math.max(0, Math.min(1, 1 - groundAngle / 25))
-                : 0.5;
+    const finalScore = rawScore !== null ? rawScore : fallbackRescore.score;
 
-    const lolaRoughnessDeg =
-        typeof data.lola_roughness_deg === 'number' && Number.isFinite(data.lola_roughness_deg)
-            ? data.lola_roughness_deg
-            : null;
+    const peakSunlight = isFiniteNum(data.peak_sunlight)
+        ? data.peak_sunlight
+        : Math.max(...sunlight24h);
 
-    const peakSunlight =
-        typeof data.peak_sunlight === 'number' ? data.peak_sunlight : Math.max(...sunlight24h);
-
-    const peakValue =
-        typeof data.peak === 'number'
-            ? data.peak
-            : typeof data.peak_sun_angle === 'number'
-                ? data.peak_sun_angle
-                : Math.max(...sunlightAngle24h);
+    const peakValue = isFiniteNum(data.peak)
+        ? data.peak
+        : isFiniteNum(data.peak_sun_angle)
+            ? data.peak_sun_angle
+            : Math.max(...sunlightAngle24h);
 
     return {
-        score: validScore,
+        score: Number(finalScore.toFixed(1)),
+        rescoreResult: fallbackRescore,
+        scoringMetrics,
+        scoringBlock,
         terrainType: data.terrain_type ?? null,
-        terrainClassId: typeof data.terrain_class_id === 'number' ? data.terrain_class_id : null,
-        daytimeAvgSunAngle:
-            typeof data.daytime_avg_sun_angle === 'number' ? data.daytime_avg_sun_angle : null,
-        terrainElevationM:
-            typeof data.terrain_elevation_m === 'number' ? data.terrain_elevation_m : null,
+        terrainClassId: isFiniteNum(data.terrain_class_id) ? data.terrain_class_id : null,
+        daytimeAvgSunAngle: isFiniteNum(data.daytime_avg_sun_angle)
+            ? data.daytime_avg_sun_angle
+            : null,
+        terrainElevationM: isFiniteNum(data.terrain_elevation_m)
+            ? data.terrain_elevation_m
+            : null,
         groundAngle,
         lolaRoughnessDeg,
         slopeSuitability,
@@ -701,126 +849,9 @@ export async function fetchSiteTelemetry(
         peakValue,
         sunlight24h,
         sunlightAngle24h,
-        isEstimatedSunSeries: !hasRealSunSeries
-    };
-}
-
-/**
- * Calls GET /sunlight-duration for a candidate lunar site across [startMs, endMs].
- */
-export async function fetchSunlightDuration(
-    lat: number,
-    lon: number,
-    startMs: number,
-    endMs: number,
-    stepMinutes = 60,
-    signal?: AbortSignal
-): Promise<MissionSunlightMetrics> {
-    const safeEndMs = Math.max(endMs, startMs + 3600 * 1000);
-    const startIso = new Date(startMs).toISOString();
-    const endIso = new Date(safeEndMs).toISOString();
-    const clampedStep = Math.max(1, Math.min(1440, Math.round(stepMinutes)));
-
-    const params = new URLSearchParams({
-        lat: lat.toString(),
-        long: lon.toString(),
-        start: startIso,
-        end: endIso,
-        step_minutes: clampedStep.toString()
-    });
-
-    const response = await fetch(`${API_BASE_URL}/sunlight-duration?${params.toString()}`, {
-        signal
-    });
-
-    if (!response.ok) {
-        let detail = `HTTP ${response.status}`;
-        try {
-            const errPayload = await response.json();
-            if (typeof errPayload?.detail === 'string') {
-                detail = errPayload.detail;
-            }
-        } catch {
-            // Ignore non-JSON error body
-        }
-        throw new Error(detail);
-    }
-
-    const data: SunlightDurationResponse = await response.json();
-
-    const fallbackMissionHours = (safeEndMs - startMs) / (3600 * 1000);
-    const missionHours =
-        firstFiniteNumber(data.total_duration_hours, data.interval_hours, data.total_hours) ??
-        fallbackMissionHours;
-
-    const resolvedStep = firstFiniteNumber(data.step_minutes) ?? clampedStep;
-    const sampleCount = firstFiniteNumber(data.total_samples, data.sample_count);
-    const sunlitSampleCount = firstFiniteNumber(data.sunlit_samples, data.sunlight_samples);
-
-    const directHours = firstFiniteNumber(
-        data.sunlight_duration_hours,
-        data.average_sunlight_duration_hours,
-        data.avg_sunlight_duration_hours,
-        data.total_sunlight_hours,
-        data.sunlight_hours,
-        data.duration_hours
-    );
-
-    const directMinutes = firstFiniteNumber(
-        data.sunlight_duration_minutes,
-        data.sunlight_minutes,
-        data.duration_minutes
-    );
-
-    const directSeconds = firstFiniteNumber(
-        data.sunlight_duration_seconds,
-        data.sunlight_seconds
-    );
-
-    const directPct = firstFiniteNumber(
-        data.sunlight_percentage,
-        data.sunlit_percentage,
-        data.sunlight_percent
-    );
-
-    const directFraction = firstFiniteNumber(
-        data.sunlight_fraction,
-        data.sunlit_fraction,
-        data.sunlight_ratio
-    );
-
-    let sunlitHours = 0;
-    if (directHours !== null) {
-        sunlitHours = directHours;
-    } else if (directMinutes !== null) {
-        sunlitHours = directMinutes / 60;
-    } else if (directSeconds !== null) {
-        sunlitHours = directSeconds / 3600;
-    } else if (directPct !== null) {
-        sunlitHours = (directPct / 100) * missionHours;
-    } else if (directFraction !== null) {
-        sunlitHours = directFraction * missionHours;
-    } else if (sunlitSampleCount !== null) {
-        sunlitHours = (sunlitSampleCount * resolvedStep) / 60;
-    }
-
-    const sunlitPercentage =
-        directPct !== null
-            ? directPct
-            : directFraction !== null
-                ? directFraction * 100
-                : missionHours > 0
-                    ? (sunlitHours / missionHours) * 100
-                    : 0;
-
-    return {
-        startIso,
-        endIso,
-        missionHours: Number(missionHours.toFixed(2)),
-        sunlitHours: Number(Math.max(0, sunlitHours).toFixed(2)),
-        sunlitPercentage: Number(Math.max(0, Math.min(100, sunlitPercentage)).toFixed(1)),
-        stepMinutes: resolvedStep,
-        sampleCount,
-        sunlitSampleCount
+        isEstimatedSunSeries: !hasRealSunSeries,
+        missionSunlight,
+        loadingMissionSunlight: false,
+        missionSunlightError: null
     };
 }

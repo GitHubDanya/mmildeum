@@ -1,15 +1,13 @@
 <script lang="ts">
     import { onDestroy } from 'svelte';
     import '#lib/lunar/shared.css';
-    import type { MissionSunlightMetrics, SelectedSite } from '#lib/lunar/types';
+    import type { SelectedSite } from '#lib/lunar/types';
     import {
         HOURS_LABELS,
+        applyFallbackRescore,
         buildFallbackSeries,
         fetchSiteTelemetry,
-        fetchSunlightDuration,
-        findRecommendedLandingWindows,
-        getTimelineBounds,
-        rescoreFromPayload
+        getTimelineBounds
     } from '#lib/lunar/telemetry';
     import LunarGlobe from '#lib/lunar/LunarGlobe.svelte';
     import SitesListView from '#lib/lunar/SitesListView.svelte';
@@ -27,12 +25,12 @@
 
     let selectedTimeMs = Date.UTC(2026, 9, 1, 0, 0);
     let missionDurationHours = 72;
-    let hasUserScrubbedTime = false;
 
-    const sunlightCache = new Map<string, MissionSunlightMetrics>();
+    const telemetryCache = new Map<string, Partial<SelectedSite>>();
     const activeAbortControllers = new Map<number, AbortController>();
     const inFlightKeys = new Map<number, string>();
-    let sunlightDebounceTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+    let refreshDebounceTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+    let lastScheduledWindowKey = '';
 
     $: activeSite = selectedSites.find((s) => s.id === activeSiteId) ?? null;
 
@@ -54,18 +52,11 @@
         selectedTimeMs = timelineBounds.startMs;
     }
 
-    // Automatically rescore all loaded landing sites whenever landing date or mission duration changes
-    $: rescoreTriggerKey = `${selectedTimeMs}|${missionDurationHours}`;
-    $: if (rescoreTriggerKey && selectedSites.length > 0) {
-        rescoreAllSites(selectedTimeMs, missionDurationHours);
-    }
-
-    $: readyTargetSites = timelineTargetSites.filter((s) => !s.loadingScore && !s.scoreError);
-    $: readySiteIdsKey = readyTargetSites.map((s) => s.id).join(',');
-    $: sunlightQueryKey = `${selectedTimeMs}|${missionDurationHours}|${readySiteIdsKey}`;
-
-    $: if (sunlightQueryKey && readyTargetSites.length > 0) {
-        scheduleSunlightFetch(selectedTimeMs, missionDurationHours, readyTargetSites);
+    // Automatically detect landing time or mission duration changes and update all selected sites
+    $: currentWindowKey = `${selectedTimeMs}|${missionDurationHours}`;
+    $: if (currentWindowKey !== lastScheduledWindowKey) {
+        lastScheduledWindowKey = currentWindowKey;
+        handleTimeOrDurationUpdate(selectedTimeMs, missionDurationHours);
     }
 
     $: isExpanded = Boolean(activeSite || compareSites);
@@ -81,83 +72,63 @@
         : viewportWidth * 0.4;
     $: rightInsetPx = Math.max(0, menuWidthPx - viewportWidth * 0.08);
 
-    function applyRescoreToSite(
-        site: SelectedSite,
-        startMs: number,
-        durationHours: number
-    ): SelectedSite {
-        if (site.loadingScore || site.scoreError) return site;
-
-        const startIso = new Date(startMs).toISOString();
-        const endIso = new Date(startMs + Math.max(1, durationHours) * 3600 * 1000).toISOString();
-
-        const result = rescoreFromPayload(
-            {
-                sunlight_windows: site.sunlightWindows,
-                visibility_windows: site.visibilityWindows,
-                normalized_metrics: {
-                    slope_suitability: site.slopeSuitability
-                }
-            },
-            startIso,
-            endIso
-        );
-
-        return {
-            ...site,
-            score: Number(result.score.toFixed(1)),
-            rescoreResult: result
-        };
-    }
-
-    function rescoreAllSites(startMs: number, durationHours: number) {
-        let didChange = false;
-        const nextSites = selectedSites.map((site) => {
-            if (site.loadingScore || site.scoreError) return site;
-            const rescored = applyRescoreToSite(site, startMs, durationHours);
-            if (rescored.score !== site.score) {
-                didChange = true;
-            }
-            return rescored;
-        });
-
-        if (didChange) {
-            selectedSites = nextSites;
-        }
-    }
-
-    function buildSunlightCacheKey(
-        site: SelectedSite,
+    function buildTelemetryCacheKey(
+        lat: number,
+        lon: number,
         startMs: number,
         durationHours: number
     ): string {
-        return `${site.rawLat.toFixed(4)}_${site.rawLon.toFixed(4)}_${startMs}_${durationHours}`;
+        return `${lat.toFixed(5)}_${lon.toFixed(5)}_${startMs}_${durationHours}`;
     }
 
-    async function fetchSiteMissionSunlight(
-        site: SelectedSite,
-        startMs: number,
-        durationHours: number,
-        bypassCache = false
-    ) {
-        const cacheKey = buildSunlightCacheKey(site, startMs, durationHours);
+    /**
+     * 1) Immediately applies `rescoreFromPayload` as a zero-latency fallback to all loaded sites.
+     * 2) Debounces and queries `/fetch-data` for every selected site to update full parameters.
+     */
+    function handleTimeOrDurationUpdate(startMs: number, durationHours: number) {
+        if (selectedSites.length === 0) return;
 
-        if (!bypassCache && sunlightCache.has(cacheKey)) {
-            const cached = sunlightCache.get(cacheKey)!;
+        selectedSites = selectedSites.map((site) => {
+            if (site.loadingScore) return site;
+            return applyFallbackRescore(site, startMs, durationHours);
+        });
+
+        if (refreshDebounceTimer !== undefined) {
+            clearTimeout(refreshDebounceTimer);
+        }
+
+        refreshDebounceTimer = setTimeout(() => {
+            for (const site of selectedSites) {
+                loadTelemetry(site, startMs, durationHours, false);
+            }
+        }, 350);
+    }
+
+    async function loadTelemetry(
+        site: SelectedSite,
+        startMs = selectedTimeMs,
+        durationHours = missionDurationHours,
+        isInitialLoad = false
+    ) {
+        const cacheKey = buildTelemetryCacheKey(site.rawLat, site.rawLon, startMs, durationHours);
+
+        if (telemetryCache.has(cacheKey)) {
+            const cached = telemetryCache.get(cacheKey)!;
             selectedSites = selectedSites.map((s) =>
                 s.id === site.id
                     ? {
                         ...s,
-                        missionSunlight: cached,
-                        loadingMissionSunlight: false,
-                        missionSunlightError: null
+                        ...cached,
+                        loadingScore: false,
+                        updatingTelemetry: false,
+                        scoreError: false
                     }
                     : s
             );
             return;
         }
 
-        if (!bypassCache && inFlightKeys.get(site.id) === cacheKey) {
+        if (inFlightKeys.get(site.id) === cacheKey) {
             return;
         }
 
@@ -170,13 +141,18 @@
 
         selectedSites = selectedSites.map((s) =>
             s.id === site.id
-                ? { ...s, loadingMissionSunlight: true, missionSunlightError: null }
+                ? {
+                    ...s,
+                    loadingScore: isInitialLoad,
+                    updatingTelemetry: !isInitialLoad,
+                    scoreError: isInitialLoad ? false : s.scoreError
+                }
                 : s
         );
 
         try {
-            const endMs = startMs + durationHours * 3600 * 1000;
-            const metrics = await fetchSunlightDuration(
+            const endMs = startMs + Math.max(1, durationHours) * 3600 * 1000;
+            const updates = await fetchSiteTelemetry(
                 site.rawLat,
                 site.rawLon,
                 startMs,
@@ -185,28 +161,34 @@
                 controller.signal
             );
 
-            sunlightCache.set(cacheKey, metrics);
+            telemetryCache.set(cacheKey, updates);
+
             selectedSites = selectedSites.map((s) =>
                 s.id === site.id
                     ? {
                         ...s,
-                        missionSunlight: metrics,
-                        loadingMissionSunlight: false,
-                        missionSunlightError: null
+                        ...updates,
+                        loadingScore: false,
+                        updatingTelemetry: false,
+                        scoreError: false
                     }
                     : s
             );
         } catch (error: any) {
             if (error?.name === 'AbortError') return;
-            selectedSites = selectedSites.map((s) =>
-                s.id === site.id
-                    ? {
-                        ...s,
-                        loadingMissionSunlight: false,
-                        missionSunlightError: error?.message ?? 'Sunlight lookup failed'
-                    }
-                    : s
-            );
+            console.error(`Failed to fetch data for site #${site.id}:`, error);
+
+            // Fall back to client-side rescoreFromPayload if the API call fails
+            selectedSites = selectedSites.map((s) => {
+                if (s.id !== site.id) return s;
+                const rescored = applyFallbackRescore(s, startMs, durationHours);
+                return {
+                    ...rescored,
+                    loadingScore: false,
+                    updatingTelemetry: false,
+                    scoreError: isInitialLoad
+                };
+            });
         } finally {
             if (activeAbortControllers.get(site.id) === controller) {
                 activeAbortControllers.delete(site.id);
@@ -214,63 +196,6 @@
             if (inFlightKeys.get(site.id) === cacheKey) {
                 inFlightKeys.delete(site.id);
             }
-        }
-    }
-
-    function scheduleSunlightFetch(
-        startMs: number,
-        durationHours: number,
-        sitesToQuery: SelectedSite[]
-    ) {
-        if (sunlightDebounceTimer !== undefined) {
-            clearTimeout(sunlightDebounceTimer);
-        }
-
-        sunlightDebounceTimer = setTimeout(() => {
-            for (const site of sitesToQuery) {
-                fetchSiteMissionSunlight(site, startMs, durationHours);
-            }
-        }, 400);
-    }
-
-    async function loadTelemetry(site: SelectedSite) {
-        selectedSites = selectedSites.map((s) =>
-            s.id === site.id ? { ...s, loadingScore: true, scoreError: false } : s
-        );
-
-        try {
-            const updates = await fetchSiteTelemetry(site.rawLat, site.rawLon);
-            selectedSites = selectedSites.map((s) => {
-                if (s.id !== site.id) return s;
-                const merged: SelectedSite = {
-                    ...s,
-                    ...updates,
-                    loadingScore: false,
-                    scoreError: false
-                };
-                return applyRescoreToSite(merged, selectedTimeMs, missionDurationHours);
-            });
-
-            if (!hasUserScrubbedTime) {
-                const updatedSite = selectedSites.find((s) => s.id === site.id);
-                if (updatedSite) {
-                    const bounds = getTimelineBounds(selectedSites);
-                    const best = findRecommendedLandingWindows(
-                        [updatedSite],
-                        bounds.startMs,
-                        bounds.endMs,
-                        missionDurationHours
-                    );
-                    if (best.length > 0) {
-                        selectedTimeMs = best[0].peakMs;
-                    }
-                }
-            }
-        } catch (error) {
-            console.error(`Failed to fetch data for site #${site.id}:`, error);
-            selectedSites = selectedSites.map((s) =>
-                s.id === site.id ? { ...s, loadingScore: false, scoreError: true } : s
-            );
         }
     }
 
@@ -289,6 +214,8 @@
             rawAlt: alt,
             score: null,
             rescoreResult: null,
+            scoringMetrics: null,
+            scoringBlock: null,
             terrainType: null,
             terrainClassId: null,
             daytimeAvgSunAngle: null,
@@ -309,6 +236,7 @@
             sunlightAngle24h: fallback.sunlightAngle24h,
             isEstimatedSunSeries: true,
             loadingScore: true,
+            updatingTelemetry: false,
             scoreError: false,
             missionSunlight: null,
             loadingMissionSunlight: false,
@@ -321,7 +249,7 @@
             activeSiteId = id;
         }
 
-        loadTelemetry(newSite);
+        loadTelemetry(newSite, selectedTimeMs, missionDurationHours, true);
     }
 
     function handleSelectSite(site: SelectedSite) {
@@ -379,12 +307,10 @@
         selectedSites = [];
         activeSiteId = null;
         comparePairIds = null;
-        hasUserScrubbedTime = false;
         nextSiteId = 1;
     }
 
     function handleTimelineChange(nextMs: number) {
-        hasUserScrubbedTime = true;
         selectedTimeMs = nextMs;
     }
 
@@ -393,8 +319,8 @@
     }
 
     onDestroy(() => {
-        if (sunlightDebounceTimer !== undefined) {
-            clearTimeout(sunlightDebounceTimer);
+        if (refreshDebounceTimer !== undefined) {
+            clearTimeout(refreshDebounceTimer);
         }
         for (const controller of activeAbortControllers.values()) {
             controller.abort();
@@ -431,7 +357,7 @@
                 onChangePair={(pair) => (comparePairIds = pair)}
                 onBack={() => (comparePairIds = null)}
                 onFocus={(site) => globe?.flyToSite(site)}
-                onRetry={loadTelemetry}
+                onRetry={(site) => loadTelemetry(site, selectedTimeMs, missionDurationHours, true)}
         />
     {:else if activeSite}
         <SiteDetailView
@@ -444,9 +370,7 @@
                 onFocus={(site) => globe?.flyToSite(site)}
                 onCompareWith={handleCompareFromDetail}
                 onRemove={handleRemoveSite}
-                onRetry={loadTelemetry}
-                onRetrySunlightDuration={(s) =>
-                fetchSiteMissionSunlight(s, selectedTimeMs, missionDurationHours, true)}
+                onRetry={(site) => loadTelemetry(site, selectedTimeMs, missionDurationHours, true)}
         />
     {:else if selectedSites.length > 0}
         <SitesListView
